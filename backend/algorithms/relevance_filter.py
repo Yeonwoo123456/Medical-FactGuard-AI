@@ -1,6 +1,5 @@
 from sentence_transformers import SentenceTransformer
-from evidence_analysis import EvidenceAnalyzer
-
+from backend.algorithms.evidence_analysis import EvidenceAnalyzer
 
 class RelevanceFilter:
     def __init__(
