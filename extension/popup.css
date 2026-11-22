@@ -1,0 +1,449 @@
+
+/* =========================================
+   Medical FactGuard AI
+   Chrome Extension Popup Design
+========================================= */
+
+:root {
+    --navy: #14283f;
+    --navy-light: #203b58;
+    --teal: #159b91;
+    --teal-dark: #117d76;
+    --teal-light: #e8f6f4;
+
+    --background: #f5f8fb;
+    --white: #ffffff;
+
+    --text-primary: #1c2d40;
+    --text-secondary: #718096;
+    --border: #e5ebf1;
+
+    --success: #159b75;
+    --shadow: 0 5px 18px rgba(20, 40, 63, 0.07);
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    width: 380px;
+    min-height: 520px;
+    font-family: "Segoe UI", Arial, sans-serif;
+    background: var(--background);
+    color: var(--text-primary);
+}
+
+.app-container {
+    width: 100%;
+    min-height: 520px;
+    display: flex;
+    flex-direction: column;
+}
+
+/* =========================================
+   Header
+========================================= */
+
+.header {
+    background: var(--navy);
+    color: var(--white);
+
+    padding: 19px 20px;
+
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+}
+
+.logo {
+    width: 39px;
+    height: 39px;
+
+    border-radius: 11px;
+
+    background: var(--teal);
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    font-size: 29px;
+    font-weight: 700;
+    color: white;
+}
+
+.brand-text h1 {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+}
+
+.brand-text p {
+    font-size: 9px;
+    color: #b7c8d8;
+    margin-top: 4px;
+    letter-spacing: 0.4px;
+}
+
+#languageSelect {
+    background: #29435e;
+    color: white;
+
+    border: 1px solid #49617a;
+    border-radius: 7px;
+
+    padding: 7px 9px;
+
+    font-size: 11px;
+    font-weight: 600;
+
+    cursor: pointer;
+    outline: none;
+}
+
+/* =========================================
+   Main Layout
+========================================= */
+
+main {
+    padding: 20px;
+    flex: 1;
+}
+
+.welcome-section {
+    margin-bottom: 19px;
+}
+
+.status {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+
+    color: var(--success);
+
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1px;
+
+    margin-bottom: 12px;
+}
+
+.status-dot {
+    width: 7px;
+    height: 7px;
+
+    border-radius: 50%;
+    background: var(--success);
+
+    box-shadow: 0 0 0 3px rgba(21, 155, 117, 0.12);
+}
+
+.welcome-section h2 {
+    font-size: 23px;
+    line-height: 1.25;
+    letter-spacing: -0.7px;
+
+    color: var(--navy);
+
+    margin-bottom: 9px;
+}
+
+.welcome-section p {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+}
+
+/* =========================================
+   Section Heading
+========================================= */
+
+.section-heading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    margin-bottom: 11px;
+}
+
+.section-heading h3 {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--navy);
+}
+
+.section-icon {
+    width: 25px;
+    height: 25px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    background: var(--teal-light);
+    color: var(--teal-dark);
+
+    border-radius: 7px;
+
+    font-size: 15px;
+}
+
+/* =========================================
+   Current Page Card
+========================================= */
+
+.page-card {
+    background: var(--white);
+
+    border: 1px solid var(--border);
+    border-radius: 12px;
+
+    padding: 14px;
+
+    box-shadow: var(--shadow);
+
+    margin-bottom: 20px;
+}
+
+.page-information {
+    background: #f7f9fb;
+
+    border-radius: 8px;
+
+    padding: 11px;
+}
+
+.page-information p {
+    font-size: 12px;
+    font-weight: 600;
+
+    color: var(--text-primary);
+
+    overflow-wrap: anywhere;
+
+    margin-bottom: 6px;
+}
+
+.page-information span {
+    font-size: 10px;
+    color: var(--text-secondary);
+}
+
+/* =========================================
+   Analysis Section
+========================================= */
+
+.analysis-section {
+    background: var(--white);
+
+    border: 1px solid var(--border);
+    border-radius: 12px;
+
+    padding: 15px;
+
+    box-shadow: var(--shadow);
+
+    margin-bottom: 20px;
+}
+
+.description {
+    font-size: 11px;
+    line-height: 1.5;
+
+    color: var(--text-secondary);
+
+    margin-bottom: 14px;
+}
+
+.primary-button {
+    width: 100%;
+    min-height: 42px;
+
+    border: none;
+    border-radius: 8px;
+
+    background: var(--teal);
+    color: white;
+
+    font-size: 12px;
+    font-weight: 700;
+
+    cursor: pointer;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+
+    transition: background 0.2s, transform 0.2s;
+}
+
+.primary-button:hover {
+    background: var(--teal-dark);
+}
+
+.primary-button:active {
+    transform: scale(0.98);
+}
+
+.primary-button:disabled {
+    background: #91bcb8;
+    cursor: not-allowed;
+}
+
+.status-message {
+    font-size: 10px;
+    line-height: 1.5;
+
+    color: var(--text-secondary);
+
+    margin-top: 9px;
+}
+
+.status-message:empty {
+    display: none;
+}
+
+/* =========================================
+   Features Section
+========================================= */
+
+.features-section {
+    margin-bottom: 18px;
+}
+
+.features-section > h3 {
+    font-size: 12px;
+    font-weight: 700;
+
+    color: var(--navy);
+
+    margin-bottom: 11px;
+}
+
+.feature-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 9px;
+}
+
+.feature-card {
+    min-height: 68px;
+
+    background: var(--white);
+
+    border: 1px solid var(--border);
+    border-radius: 9px;
+
+    padding: 11px;
+
+    display: flex;
+    align-items: center;
+    gap: 9px;
+
+    transition: border-color 0.2s, transform 0.2s;
+}
+
+.feature-card:hover {
+    border-color: #a6d9d4;
+    transform: translateY(-2px);
+}
+
+.feature-icon {
+    width: 29px;
+    height: 29px;
+
+    flex-shrink: 0;
+
+    border-radius: 8px;
+
+    background: var(--teal-light);
+    color: var(--teal-dark);
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    font-size: 17px;
+}
+
+.feature-card p {
+    font-size: 10px;
+    line-height: 1.4;
+    font-weight: 600;
+
+    color: var(--text-primary);
+}
+
+/* =========================================
+   Footer
+========================================= */
+
+footer {
+    background: var(--white);
+
+    border-top: 1px solid var(--border);
+
+    padding: 13px 20px;
+
+    text-align: center;
+}
+
+footer p:first-child {
+    font-size: 10px;
+    font-weight: 700;
+
+    color: var(--navy);
+
+    margin-bottom: 5px;
+}
+
+footer p:first-child span {
+    color: var(--teal);
+    padding: 0 3px;
+}
+
+footer p:last-child {
+    font-size: 9px;
+    color: var(--text-secondary);
+}
+
+/* =========================================
+   Korean Language Support
+========================================= */
+
+body.korean {
+    font-family: "Malgun Gothic", "Segoe UI", sans-serif;
+}
+
+body.korean .welcome-section h2 {
+    letter-spacing: -0.8px;
+    font-size: 21px;
+}
+
+/* =========================================
+   Responsive Content
+========================================= */
+
+@media (max-width: 350px) {
+    body {
+        width: 100%;
+    }
+
+    main {
+        padding: 15px;
+    }
+
+    .welcome-section h2 {
+        font-size: 20px;
+    }
+}

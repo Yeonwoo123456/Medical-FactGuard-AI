@@ -1,104 +1,122 @@
 
-import sys
 import os
+import sys
 
 sys.path.insert(
     0,
-    os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..")
+    )
 )
+
+import pytest
 
 from backend.algorithms.local_search import LocalSearchOptimizer
 
 
-def run_tests():
-
-    optimizer = LocalSearchOptimizer(
+@pytest.fixture
+def optimizer():
+    instance = LocalSearchOptimizer(
         beam_width=3,
-        max_iterations=5
+        max_results_per_query=10,
     )
 
-    claim = "Vaccines cause serious side effects"
+    yield instance
 
-    documents = [
+    instance.close()
+
+
+@pytest.fixture
+def claim():
+    return "Vaccines cause serious side effects"
+
+
+@pytest.fixture
+def documents():
+    return [
         "Clinical studies investigate vaccine safety and side effects.",
         "Scientific research evaluates vaccine effectiveness and safety.",
         "Some studies examine adverse reactions after vaccination.",
-        "Systematic reviews analyze vaccine risks and benefits."
+        "Systematic reviews analyze vaccine risks and benefits.",
     ]
 
-    print("\nLOCAL SEARCH TEST")
-    print("=" * 60)
 
-    # Test 1: Beam Search
-    beam_results = optimizer.beam_search(
-        claim, documents
+def test_beam_search(optimizer, claim, documents):
+
+    results = optimizer.beam_search(
+        claim,
+        documents,
     )
 
-    test1 = (
-        len(beam_results) > 0
-        and len(beam_results) <= optimizer.beam_width
-    )
+    assert isinstance(results, list)
+    assert len(results) > 0
+    assert len(results) <= optimizer.beam_width
 
-    print("\nTest 1 - Beam Search")
-    print("PASS" if test1 else "FAIL")
+    for query, score in results:
+        assert isinstance(query, str)
+        assert isinstance(score, float)
 
-    # Test 2: Hill Climbing
+
+def test_hill_climbing(optimizer, claim, documents):
+
     initial_score = optimizer.score_query(
-        claim, documents
+        claim,
+        documents,
     )
 
-    hill_result = optimizer.hill_climbing(
-        claim, documents
+    optimized_query = optimizer.hill_climbing(
+        claim,
+        documents,
+        max_iterations=5,
     )
 
-    test2 = hill_result["score"] >= initial_score
-
-    print("\nTest 2 - Hill Climbing")
-    print("PASS" if test2 else "FAIL")
-
-    # Test 3: Duplicate removal
-    optimized = optimizer.optimize(
-        claim, documents
+    optimized_score = optimizer.score_query(
+        optimized_query,
+        documents,
     )
 
-    queries = [
-        item["query"]
-        for item in optimized["optimized_queries"]
-    ]
+    assert isinstance(optimized_query, str)
+    assert optimized_query.strip() != ""
+    assert optimized_score >= initial_score
 
-    test3 = len(queries) == len(set(queries))
 
-    print("\nTest 3 - Duplicate Removal")
-    print("PASS" if test3 else "FAIL")
+def test_duplicate_removal(optimizer, claim, documents):
 
-    # Test 4: Empty documents
-    empty_result = optimizer.optimize(
-        claim, []
+    candidates = optimizer.generate_candidates(claim)
+
+    assert len(candidates) == len(set(candidates))
+
+    result = optimizer.optimize(
+        claim,
+        documents,
     )
 
-    test4 = (
-        len(empty_result["beam_search_results"]) > 0
-        and all(
-            item["score"] == 0
-            for item in empty_result["optimized_queries"]
-        )
+    queries = result["optimized_queries"]
+
+    assert isinstance(queries, list)
+    assert all(isinstance(query, str) for query in queries)
+    assert len(queries) == len(set(queries))
+
+
+def test_empty_documents(optimizer, claim):
+
+    result = optimizer.optimize(
+        claim,
+        [],
     )
 
-    print("\nTest 4 - Empty Documents")
-    print("PASS" if test4 else "FAIL")
+    assert isinstance(result, dict)
 
-    # Summary
-    results = [test1, test2, test3, test4]
+    assert result["retrieved_article_count"] == 0
+    assert result["articles"] == []
 
-    passed = sum(results)
-    total = len(results)
+    beam_results = result["beam_search_results"]
 
-    print("\nTEST SUMMARY")
-    print("-" * 60)
-    print(f"Passed: {passed}/{total}")
-    print(f"Failed: {total - passed}/{total}")
-    print(f"Success Rate: {passed / total:.2%}")
+    assert len(beam_results) > 0
 
+    assert all(
+        item["score"] == 0.0
+        for item in beam_results
+    )
 
-if __name__ == "__main__":
-    run_tests()
+    assert result["optimized_queries"] == [claim]

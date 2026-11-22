@@ -1,15 +1,17 @@
-
 import re
 
 
 class SentenceClassifier:
+
     def __init__(self):
+
         self.patterns = {
+
             "Research Objective": [
                 r"\bthe aim of this (?:study|review|paper|research)\b",
                 r"\bthe objective of this (?:study|review|paper)\b",
-                r"\bthis study aims to\b",
-                r"\bthis review aims to\b",
+                r"\bthis study aims? to\b",
+                r"\bthis review aims? to\b",
                 r"\bwe aimed to\b",
                 r"\bwe sought to\b",
                 r"\bto evaluate\b",
@@ -23,6 +25,8 @@ class SentenceClassifier:
                 r"\bto explore\b",
                 r"\bto estimate\b",
                 r"\bto analyze\b",
+                r"\bto analyse\b",
+                r"\bto measure\b",
             ],
 
             "Research Method": [
@@ -43,6 +47,7 @@ class SentenceClassifier:
                 r"\bwe conducted\b",
                 r"\bwe performed\b",
                 r"\brandomized controlled trial\b",
+                r"\brandomised controlled trial\b",
                 r"\bsystematic review\b",
                 r"\bmeta-analysis\b",
                 r"\bcohort study\b",
@@ -52,6 +57,12 @@ class SentenceClassifier:
                 r"\bmedian follow-up\b",
                 r"\bsearch strategy\b",
                 r"\beligibility criteria\b",
+                r"\bprimary outcome was\b",
+                r"\bsecondary outcomes? included\b",
+                r"\bwe extracted data\b",
+                r"\bwe assessed the quality\b",
+                r"\bthe data were analyzed\b",
+                r"\bthe data were analysed\b",
             ],
 
             "Research Result": [
@@ -64,13 +75,18 @@ class SentenceClassifier:
                 r"\bwere associated with\b",
                 r"\bshowed a potential benefit\b",
                 r"\bpotential benefit for\b",
-                r"\ba reduced risk of\b",
-                r"\breduced risk of\b",
-                r"\bwas associated with a reduced risk\b",
-                r"\bwas associated with an increased risk\b",
+                r"\breduced the risk\b",
+                r"\breduced risk\b",
+                r"\bincreased the risk\b",
+                r"\bincreased risk\b",
+                r"\blower risk\b",
+                r"\bhigher risk\b",
                 r"\bsignificantly reduced\b",
                 r"\bsignificantly increased\b",
                 r"\bno significant difference\b",
+                r"\bnot significantly different\b",
+                r"\bdid not differ significantly\b",
+                r"\bno difference was observed\b",
                 r"\bsimilar between\b",
                 r"\bthe risk of\b",
                 r"\breduction in\b",
@@ -82,7 +98,7 @@ class SentenceClassifier:
                 r"\bwere lower than\b",
                 r"\bwere higher than\b",
                 r"\bconfidence interval\b",
-                r"\b95% CI\b",
+                r"\b\d{1,2}(?:\.\d+)?%\s*CI\b",
                 r"\bhigh-certainty evidence\b",
                 r"\bmoderate-certainty evidence\b",
                 r"\blow-certainty evidence\b",
@@ -98,6 +114,25 @@ class SentenceClassifier:
                 r"\bshowed effectiveness\b",
                 r"\bwas protective against\b",
                 r"\bwere protective against\b",
+                r"\bwas observed\b",
+                r"\bwere observed\b",
+                r"\bwas reported\b",
+                r"\bwere reported\b",
+                r"\bwas reduced\b",
+                r"\bwere reduced\b",
+                r"\bwas increased\b",
+                r"\bwere increased\b",
+                r"\bthe incidence was\b",
+                r"\bthe prevalence was\b",
+                r"\bthe rate was\b",
+                r"\bthe proportion was\b",
+                r"\bthe hazard ratio was\b",
+                r"\bthe odds ratio was\b",
+                r"\bthe risk ratio was\b",
+                r"\bthe mean difference was\b",
+
+                # General outcome changes
+                r"\b(?:reduced|decreased|increased|improved|worsened)\s+\w+",
             ],
 
             "Safety Result": [
@@ -148,7 +183,6 @@ class SentenceClassifier:
                 r"\bconcerns regarding\b",
                 r"\bthere is uncertainty about\b",
                 r"\buncertainty surrounding\b",
-                r"\brefer to delayed acceptance\b",
                 r"\bvaccine hesitancy\b",
                 r"\bbeyond the burden of\b",
                 r"\bin recent years\b",
@@ -165,10 +199,9 @@ class SentenceClassifier:
                 r"\bthese findings suggest\b",
                 r"\bthese results suggest\b",
                 r"\bthe findings indicate\b",
-                r"\bthe results indicate\b",
                 r"\bour findings demonstrate\b",
                 r"\bour results demonstrate\b",
-                r"\boverall,?\b",
+                r"\boverall\b",
                 r"\bthe evidence indicates\b",
                 r"\bthe evidence supports\b",
                 r"\bthe findings support\b",
@@ -219,12 +252,13 @@ class SentenceClassifier:
             r"adverse events?|adverse effects?|"
             r"serious adverse events?|serious adverse effects?|"
             r"side effects?|vaccine-related harms?|"
-            r"drug-related harms?|"
-            r"miscarriage|stillbirth|"
-            r"congenital abnormalities|"
-            r"pregnancy outcomes?|"
-            r"pregnancy complications?|"
-            r"toxicity|serious complications?"
+            r"drug-related harms?|treatment-related harms?|"
+            r"medication-related harms?|miscarriage|stillbirth|"
+            r"congenital abnormalities|pregnancy outcomes?|"
+            r"pregnancy complications?|toxicity|"
+            r"serious complications?|vaccine safety|drug safety|"
+            r"treatment safety|medication safety|safety profile|"
+            r"SAEs?|AEs?"
             r")\b",
             re.IGNORECASE,
         )
@@ -232,22 +266,30 @@ class SentenceClassifier:
         self.safety_result_expressions = re.compile(
             r"\b("
             r"was|were|is|are|showed|shows|found|"
-            r"results|risk|incidence|rate|similar|"
-            r"higher|lower|increased|decreased|"
-            r"occurred|reported|"
-            r"no significant difference|"
-            r"not significantly different"
+            r"occurred|reported|observed|recorded|"
+            r"experienced|developed|similar|comparable|"
+            r"higher|lower|increased|decreased|reduced|remained|"
+            r"appeared|seemed|did not differ|no increase|"
+            r"no difference|not significantly different|"
+            r"significantly different|cannot be excluded|"
+            r"could not be excluded"
             r")\b",
             re.IGNORECASE,
         )
 
+    # --------------------------------------------------
+    # Classify Sentence
+    # --------------------------------------------------
+
     def classify(self, sentence):
+
         if not isinstance(sentence, str) or not sentence.strip():
+
             return {
                 "type": "Other",
                 "matched_patterns": [],
                 "confidence": 0.0,
-                "scores": {},
+                "scores": {}
             }
 
         sentence = sentence.strip()
@@ -256,6 +298,7 @@ class SentenceClassifier:
         matched_patterns = {}
 
         for category, patterns in self.compiled_patterns.items():
+
             matches = [
                 pattern.pattern
                 for pattern in patterns
@@ -268,53 +311,57 @@ class SentenceClassifier:
         total_score = sum(scores.values())
 
         if total_score == 0:
+
             return {
                 "type": "Other",
                 "matched_patterns": [],
                 "confidence": 0.0,
-                "scores": scores,
+                "scores": scores
             }
 
         # Priority 1: Recommendations
+
         if scores["Recommendation"] > 0:
             selected_category = "Recommendation"
 
         # Priority 2: Research objectives
+
         elif scores["Research Objective"] > 0:
             selected_category = "Research Objective"
 
         # Priority 3: Research methods
+
         elif scores["Research Method"] > 0:
             selected_category = "Research Method"
 
         else:
-            # Safety classification requires both a safety term
-            # and an expression describing an actual finding.
+
             has_safety_term = bool(
                 self.safety_terms.search(sentence)
             )
 
-            has_result_expression = bool(
+            has_safety_result = bool(
                 self.safety_result_expressions.search(sentence)
             )
 
-            if (
-                scores["Safety Result"] > 0
-                and has_safety_term
-                and has_result_expression
-            ):
+            if has_safety_term and has_safety_result:
+
                 selected_category = "Safety Result"
 
             else:
+
+                # Conclusion takes priority over Research Result
+                # when a conclusion pattern is explicitly detected.
+
                 priority_order = [
-                    "Research Result",
                     "Conclusion",
-                    "Background",
+                    "Research Result",
+                    "Background"
                 ]
 
                 selected_category = max(
                     priority_order,
-                    key=lambda category: scores[category],
+                    key=lambda category: scores[category]
                 )
 
                 if scores[selected_category] == 0:
@@ -334,5 +381,5 @@ class SentenceClassifier:
                 selected_category, []
             ),
             "confidence": round(confidence, 4),
-            "scores": scores,
+            "scores": scores
         }

@@ -1,4 +1,3 @@
-
 import re
 
 
@@ -6,7 +5,12 @@ class AbstractParser:
 
     def __init__(self):
 
+        # --------------------------------------------------
+        # Section Mapping
+        # --------------------------------------------------
+
         self.section_mapping = {
+
             "BACKGROUND": "Background",
             "INTRODUCTION": "Background",
 
@@ -18,17 +22,19 @@ class AbstractParser:
             "METHOD": "Research Method",
             "METHODS": "Research Method",
             "METHODOLOGY": "Research Method",
+            "STUDY DESIGN": "Research Method",
+            "DATA SOURCES": "Research Method",
             "SEARCH METHODS": "Research Method",
             "SELECTION CRITERIA": "Research Method",
             "DATA COLLECTION AND ANALYSIS": "Research Method",
+            "PARTICIPANTS": "Research Method",
+            "INTERVENTIONS": "Research Method",
 
             "RESULT": "Research Result",
             "RESULTS": "Research Result",
             "MAIN RESULTS": "Research Result",
             "FINDINGS": "Research Result",
             "EFFICACY ENDPOINTS": "Research Result",
-            "HPV16/18 NEGATIVE": "Research Result",
-            "REGARDLESS OF HPV DNA STATUS": "Research Result",
 
             "CONCLUSION": "Conclusion",
             "CONCLUSIONS": "Conclusion",
@@ -36,6 +42,7 @@ class AbstractParser:
 
             "ADVERSE EFFECTS": "Safety Result",
             "ADVERSE EVENTS": "Safety Result",
+            "SAFETY RESULTS": "Safety Result",
             "PREGNANCY OUTCOMES": "Safety Result",
 
             "RECOMMENDATION": "Recommendation",
@@ -49,27 +56,45 @@ class AbstractParser:
         )
 
         heading_pattern = "|".join(
-            re.escape(name) for name in section_names
+            re.escape(name)
+            for name in section_names
         )
 
-        # A heading must either:
-        # 1. Be followed by a colon, or
-        # 2. Be immediately followed by an uppercase letter.
+        # Recognizes:
+        # BACKGROUND: ...
+        # METHODS: ...
+        # Adverse effectsThe risk ...
         #
-        # The second rule handles headings such as:
-        # Adverse effectsThe risk...
-        # Pregnancy outcomesAmong those...
+        # The second form handles missing spaces
+        # between headings and their content.
 
         self.section_pattern = re.compile(
             r"(?<![A-Za-z])("
             + heading_pattern
-            + r")(?::\s*|(?=(?-i:[A-Z])))",
+            + r")"
+            r"(?::\s*|(?=(?-i:[A-Z])))",
             re.IGNORECASE
         )
 
+        # --------------------------------------------------
+        # Abbreviations
+        # --------------------------------------------------
+
         self.abbreviations = [
-            "e.g.", "i.e.", "Dr.", "Mr.", "Mrs.",
-            "Prof.", "vs.", "etc.", "et al."
+            "e.g.",
+            "i.e.",
+            "Dr.",
+            "Mr.",
+            "Mrs.",
+            "Prof.",
+            "vs.",
+            "etc.",
+            "et al.",
+            "Fig.",
+            "No.",
+            "approx.",
+            "Inc.",
+            "Ltd."
         ]
 
     # --------------------------------------------------
@@ -81,10 +106,26 @@ class AbstractParser:
         if not isinstance(text, str):
             return ""
 
-        text = text.replace("\n", " ")
-        text = text.replace("\r", " ")
+        text = text.replace("\r\n", "\n")
+        text = text.replace("\r", "\n")
 
-        text = re.sub(r"\s+", " ", text)
+        text = re.sub(
+            r"[ \t]+",
+            " ",
+            text
+        )
+
+        text = re.sub(
+            r"\n+",
+            " ",
+            text
+        )
+
+        text = re.sub(
+            r"\s+",
+            " ",
+            text
+        )
 
         return text.strip()
 
@@ -112,6 +153,8 @@ class AbstractParser:
             }]
 
         sections = []
+
+        # Text before the first heading
 
         prefix = text[:matches[0].start()].strip()
 
@@ -141,14 +184,16 @@ class AbstractParser:
 
             sections.append({
                 "section": section_name,
-                "section_type": self.section_mapping[section_name],
+                "section_type": self.section_mapping[
+                    section_name
+                ],
                 "text": section_text
             })
 
         return sections
 
     # --------------------------------------------------
-    # Protect Abbreviations and Decimal Numbers
+    # Protect Special Periods
     # --------------------------------------------------
 
     def protect_special_periods(self, text):
@@ -160,21 +205,22 @@ class AbstractParser:
             self.abbreviations
         ):
 
-            token = f"ABBREVIATIONTOKEN{index}"
+            token = f"ABBREVIATIONTOKEN{index}END"
 
             pattern = re.compile(
                 re.escape(abbreviation),
                 re.IGNORECASE
             )
 
-            if pattern.search(protected):
+            protected = pattern.sub(
+                token,
+                protected
+            )
 
-                protected = pattern.sub(
-                    token,
-                    protected
-                )
+            tokens[token] = abbreviation
 
-                tokens[token] = abbreviation
+        # Protect decimal points:
+        # 3.14 -> 3DECIMALPOINTTOKEN14
 
         protected = re.sub(
             r"(?<=\d)\.(?=\d)",
@@ -199,6 +245,10 @@ class AbstractParser:
             text
         )
 
+        # Split after sentence-ending punctuation.
+        # Also supports missing spaces before uppercase
+        # letters, e.g. "infection.The results..."
+
         parts = re.split(
             r"(?<=[.!?])\s+|(?<=[.!?])(?=[A-Z])",
             protected
@@ -213,6 +263,8 @@ class AbstractParser:
             if not sentence:
                 continue
 
+            # Restore abbreviations
+
             for token, original in tokens.items():
 
                 sentence = sentence.replace(
@@ -220,12 +272,17 @@ class AbstractParser:
                     original
                 )
 
+            # Restore decimal points
+
             sentence = sentence.replace(
                 "DECIMALPOINTTOKEN",
                 "."
             )
 
-            if len(sentence) > 10:
+            # Keep short but meaningful sentences.
+            # Avoid arbitrary length-based deletion.
+
+            if sentence:
                 sentences.append(sentence)
 
         return sentences
@@ -249,16 +306,20 @@ class AbstractParser:
             for sentence in sentences:
 
                 parsed_sentences.append({
+
                     "section": section["section"],
+
                     "section_type": section["section_type"],
+
                     "sentence": sentence
+
                 })
 
         return parsed_sentences
 
 
 # --------------------------------------------------
-# Test
+# Manual Test
 # --------------------------------------------------
 
 if __name__ == "__main__":

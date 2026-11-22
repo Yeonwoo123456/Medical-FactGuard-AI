@@ -1,6 +1,8 @@
+
 import re
 
 from backend.algorithms.medical_classifier import MedicalClassifier
+from backend.algorithms.local_search import LocalSearchOptimizer
 from backend.algorithms.relevance_filter import RelevanceFilter
 from backend.algorithms.sentence_classifier import SentenceClassifier
 from backend.algorithms.statistical_evidence import StatisticalEvidenceAnalyzer
@@ -23,7 +25,18 @@ class EvidencePipeline:
         self.relevance_filter = RelevanceFilter()
         self.sentence_classifier = SentenceClassifier()
         self.statistical_analyzer = StatisticalEvidenceAnalyzer()
-        self.pubmed_retriever = PubMedRetriever()
+
+        # Shared PubMed Retriever
+        self.pubmed_retriever = PubMedRetriever(
+            max_results=10
+        )
+
+        # Local Search Optimizer
+        self.local_search_optimizer = LocalSearchOptimizer(
+            retriever=self.pubmed_retriever,
+            beam_width=3,
+            max_results_per_query=10,
+        )
 
         # Textual uncertainty is separate from statistical uncertainty.
         self.uncertainty_patterns = [
@@ -47,7 +60,8 @@ class EvidencePipeline:
             r"\bthe results are inconclusive\b",
         ]
 
-        # These patterns identify a safety-related topic, not a proven harm.
+        # These patterns identify a safety-related topic,
+        # not a proven harm.
         self.safety_topic_patterns = [
             r"\badverse events?\b",
             r"\badverse effects?\b",
@@ -75,51 +89,114 @@ class EvidencePipeline:
             r"\btreatment safety\b",
             r"\bmedication safety\b",
             r"\bsafety profile\b",
+            r"\blong[- ]term safety\b",
+            # Common clinical-trial abbreviations.
+            r"\bSAEs?\b",
+            r"\bAEs?\b",
+            r"\bNDCMCs?\b",
         ]
 
-        # These patterns identify reported safety findings or explicit
-        # safety conclusions. They do not establish that a treatment is
-        # medically safe or unsafe.
+        # These patterns identify reported safety findings
+        # or explicit safety conclusions.
         self.safety_result_patterns = [
-            r"\badverse events? (?:were|was) "
+            # 1. Event-level comparisons, including appeared/seemed similar.
+            r"\b(?:adverse events?|adverse effects?|serious adverse events?|"
+            r"serious adverse effects?|side effects?|serious harms?)\s+"
+            r"(?:were|was|are|is|appeared to be|seemed to be)\s+"
+            r"(?:similar|higher|lower|comparable|increased|reduced|"
+            r"more common|less common|more frequent|less frequent|"
+            r"low|rare)\b",
+
+            # 2. Incidence/rate/frequency comparisons.
+            r"\b(?:the )?(?:incidence|rate|frequency|proportion)\s+of\s+"
+            r"(?:serious )?(?:adverse events?|adverse effects?|side effects?|"
+            r"miscarriage|stillbirth|pregnancy outcomes?|pregnancy complications?)"
+            r"\s+(?:was|were|is|are|appeared to be|seemed to be)\s+"
+            r"(?:similar|higher|lower|comparable|increased|reduced|"
+            r"not significantly different|not different|low)\b",
+
+            # 3. Risk changes associated with safety outcomes.
+            r"\b(?:increased|higher|reduced|lower|excess)\s+risk\s+of\s+"
+            r"(?:serious )?(?:adverse events?|adverse effects?|side effects?|"
+            r"miscarriage|stillbirth|pregnancy outcomes?|pregnancy complications?)\b",
+
+            # 4. Risk comparison wording.
+            r"\brisk\s+of\s+(?:serious )?(?:adverse events?|adverse effects?|"
+            r"side effects?|miscarriage|stillbirth|pregnancy outcomes?)\s+"
+            r"(?:was|were|is|are|appeared to be|seemed to be)\s+"
             r"(?:similar|higher|lower|comparable|increased|reduced)\b",
-            r"\badverse effects? (?:were|was) "
-            r"(?:similar|higher|lower|comparable|increased|reduced)\b",
-            r"\bserious adverse events? (?:were|was) "
-            r"(?:similar|higher|lower|comparable|increased|reduced)\b",
-            r"\bside effects? (?:were|was) "
-            r"(?:similar|higher|lower|comparable|increased|reduced)\b",
-            r"\b(?:increased|higher|reduced|lower) risk of "
-            r"(?:serious )?(?:adverse events?|adverse effects?|"
-            r"miscarriage|stillbirth|pregnancy outcomes?|"
-            r"pregnancy complications?)\b",
-            r"\brisk of (?:serious )?(?:adverse events?|adverse effects?|"
-            r"miscarriage|stillbirth|pregnancy outcomes?) "
-            r"(?:was|were|is|are) "
-            r"(?:similar|higher|lower|increased|reduced)\b",
-            r"\b(?:miscarriage|stillbirth|congenital abnormalities) "
-            r"(?:were|was|occurred|reported|observed)\b",
-            r"\b(?:pregnancy outcomes?|pregnancy complications?) "
-            r"(?:were|was) "
-            r"(?:similar|higher|lower|comparable|increased|reduced)\b",
-            r"\b(?:adverse events?|adverse effects?|serious harms?) "
+
+            # 5. Participant-level reports (e.g. Eight participants experienced...).
+            r"\b(?:one|two|three|four|five|six|seven|eight|nine|ten|"
+            r"several|many|\d+)\s+"
+            r"(?:participants?|patients?|individuals?)\s+"
+            r"(?:experienced|reported|developed|had)\s+"
+            r"(?:serious )?(?:adverse events?|adverse effects?|side effects?|"
+            r"complications?)\b",
+
+            # 6. Events reported or observed.
+            r"\b(?:serious )?(?:adverse events?|adverse effects?|"
+            r"side effects?|serious harms?)\s+"
             r"(?:occurred|were reported|was reported|were observed|"
-            r"was observed)\b",
+            r"was observed|were experienced|was experienced)\b",
+
+            # 7. Explicit participant counts.
+            r"\b(?:serious )?(?:adverse events?|adverse effects?)\s+"
+            r"(?:were|was)\s+reported\s+(?:in|among)\s+"
+            r"(?:\d+|one|two|three|four|five|several|many)\s+"
+            r"(?:participants?|patients?|individuals?)\b",
+
+            # 8. Clinical-trial abbreviation rates, e.g. SAE and NDCMC rates.
+            r"\b(?:SAE|SAEs|AE|AEs|NDCMC|NDCMCs)\s+"
+            r"(?:and\s+(?:SAE|SAEs|AE|AEs|NDCMC|NDCMCs)\s+)?"
+            r"rates?\s+(?:were|was|remained|appeared to be)\s+"
+            r"(?:low|similar|comparable|higher|lower)\b",
+
+            # 9. Events more/less common or frequent in a group.
+            r"\b(?:adverse events?|adverse effects?|serious adverse events?|"
+            r"side effects?|local reactions?|systemic events?)\b"
+            r".{0,120}\b(?:were|was|are|is)\s+(?:significantly )?"
+            r"(?:more common|less common|more frequent|less frequent|"
+            r"higher|lower)\b",
+
+            # 10. No meaningful/significant differences in safety outcomes.
+            r"\bno\s+(?:(?:clinically|statistically)\s+)?"
+            r"(?:meaningful|significant)\s+differences?\s+in\s+"
+            r"(?:serious )?(?:adverse events?|adverse effects?|side effects?)\b"
+            r".{0,80}\b(?:were|was|are|is)\s+(?:noted|observed|reported|found)\b",
+            r"\bno\s+(?:clinically meaningful|significant)\s+"
+            r"differences?\s+in\s+(?:serious )?"
+            r"(?:adverse events?|adverse effects?|side effects?)\b",
+
+            # 11. Pregnancy outcomes.
+            r"\b(?:miscarriage|stillbirth|congenital abnormalities)\s+"
+            r"(?:were|was|occurred|reported|observed)\b",
+            r"\b(?:pregnancy outcomes?|pregnancy complications?)\s+"
+            r"(?:were|was|are|is)\s+"
+            r"(?:similar|higher|lower|comparable|increased|reduced)\b",
+
+            # 12. Relationship to treatment (reported attribution only).
+            r"\b(?:serious )?(?:adverse events?|adverse effects?)\b"
+            r".{0,100}\b(?:were|was)\s+"
+            r"(?:considered|judged|deemed)\s+related\b",
             r"\b(?:have|has|had) been judged not to be related\b",
             r"\b(?:was|were) judged not to be related\b",
             r"\b(?:was|were) not considered related\b",
             r"\b(?:was|were) not related to the vaccine\b",
-            # An explicit statement that a risk cannot be ruled out is
-            # a reported safety conclusion, but it remains uncertain.
+
+            # 13. Explicitly stated possibility that risk cannot be excluded.
             r"\bcannot be excluded\b",
             r"\bcould not be excluded\b",
         ]
 
-        # These patterns identify concerns, not actual observed outcomes.
+        # These patterns identify concerns,
+        # not actual observed outcomes.
         self.safety_concern_patterns = [
             r"\bconcerns? about\b",
             r"\bconcerns? regarding\b",
+            r"\bconcerns? over\b",
             r"\bdoubts? about\b",
+            r"\bpossible adverse events?\b",
             r"\bpossible adverse events?\b",
             r"\bpotential adverse events?\b",
             r"\bpotential adverse effects?\b",
@@ -130,9 +207,9 @@ class EvidencePipeline:
             r"\bconcerns? over vaccine safety\b",
         ]
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
     # Utility methods
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
 
     @staticmethod
     def to_float(value, default=0.0):
@@ -144,15 +221,16 @@ class EvidencePipeline:
     @staticmethod
     def matches_any(patterns, text):
         text = text if isinstance(text, str) else ""
+
         return [
             pattern
             for pattern in patterns
             if re.search(pattern, text, re.IGNORECASE)
         ]
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
     # Medical claim classification
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
 
     def classify_claim(self, claim):
         result = self.medical_classifier.classify(claim)
@@ -161,10 +239,17 @@ class EvidencePipeline:
             category = result[0] if len(result) > 0 else "Unknown"
             confidence = result[1] if len(result) > 1 else 0.0
             keywords = result[2] if len(result) > 2 else []
+
         elif isinstance(result, dict):
             category = result.get("category", "Unknown")
             confidence = result.get("confidence", 0.0)
-            keywords = result.get("matched_keywords", [])
+
+            # Support both classifier output formats.
+            keywords = result.get(
+                "matched_keywords",
+                result.get("scores", {}),
+            )
+
         else:
             category = str(result)
             confidence = 0.0
@@ -172,11 +257,12 @@ class EvidencePipeline:
 
         return category, self.to_float(confidence), keywords
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
     # Evidence result normalization
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
 
     def normalize_evidence_result(self, result):
+
         if not isinstance(result, dict):
             return {
                 "classification": "Insufficient",
@@ -195,51 +281,81 @@ class EvidencePipeline:
             "Neutral",
             "Insufficient",
         }
+
         if classification not in allowed_labels:
             classification = "Insufficient"
 
         return {
             "classification": classification,
             "relevance": self.to_float(
-                result.get("relevance", result.get("similarity", 0.0))
+                result.get(
+                    "relevance",
+                    result.get("similarity", 0.0),
+                )
             ),
-            "confidence": self.to_float(result.get("confidence", 0.0)),
+            "confidence": self.to_float(
+                result.get("confidence", 0.0)
+            ),
         }
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
     # Uncertainty detection
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
 
     def detect_uncertainty(self, sentence):
-        matches = self.matches_any(self.uncertainty_patterns, sentence)
+
+        matches = self.matches_any(
+            self.uncertainty_patterns,
+            sentence,
+        )
+
         return {
             "is_uncertain": bool(matches),
             "matched_patterns": matches,
         }
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
     # Safety classification
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
 
-    def detect_safety_signals(self, sentence, section_type="Other"):
-        """Return separate signals for topic, finding, and concern.
-
-        section_type is retained for backward compatibility. The decision
-        is based on sentence content rather than the section label alone.
+    def detect_safety_signals(
+        self,
+        sentence,
+        section_type="Other",
+    ):
         """
+        Returns separate signals for:
+        - Safety topic
+        - Safety finding
+        - Safety concern
+
+        section_type is retained for backward compatibility.
+        """
+
         topic_matches = self.matches_any(
-            self.safety_topic_patterns, sentence
+            self.safety_topic_patterns,
+            sentence,
         )
+
         result_matches = self.matches_any(
-            self.safety_result_patterns, sentence
+            self.safety_result_patterns,
+            sentence,
         )
+
         concern_matches = self.matches_any(
-            self.safety_concern_patterns, sentence
+            self.safety_concern_patterns,
+            sentence,
         )
 
         safety_topic = bool(topic_matches)
-        safety_result = safety_topic and bool(result_matches)
-        safety_concern = safety_topic and bool(concern_matches)
+
+        safety_result = (
+            safety_topic and bool(result_matches)
+        )
+
+        safety_concern = (
+            safety_topic and bool(concern_matches)
+        )
 
         return {
             "safety_topic": safety_topic,
@@ -250,18 +366,25 @@ class EvidencePipeline:
             "concern_patterns": concern_matches,
         }
 
-    def detect_safety_evidence(self, sentence, section_type="Other"):
+    def detect_safety_evidence(
+        self,
+        sentence,
+        section_type="Other",
+    ):
         """Backward-compatible alias for older code."""
+
         return self.detect_safety_signals(
-            sentence, section_type
+            sentence,
+            section_type,
         )["safety_topic"]
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
     # Evidence counting and statistical summary
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
 
     @staticmethod
     def count_classifications(results):
+
         counts = {
             "Supporting": 0,
             "Contradicting": 0,
@@ -270,7 +393,11 @@ class EvidencePipeline:
         }
 
         for result in results:
-            label = result.get("evidence_classification", "Insufficient")
+            label = result.get(
+                "evidence_classification",
+                "Insufficient",
+            )
+
             if label in counts:
                 counts[label] += 1
 
@@ -278,6 +405,7 @@ class EvidencePipeline:
 
     @staticmethod
     def summarize_statistics(results):
+
         summary = {
             "analyzed_sentences": 0,
             "confidence_intervals_found": 0,
@@ -293,68 +421,116 @@ class EvidencePipeline:
         }
 
         for result in results:
-            statistical = result.get("statistical_analysis") or {}
+
+            statistical = (
+                result.get("statistical_analysis") or {}
+            )
 
             if not statistical.get("available"):
-                summary["sentences_without_detected_statistics"] += 1
+                summary[
+                    "sentences_without_detected_statistics"
+                ] += 1
                 continue
 
             summary["analyzed_sentences"] += 1
 
             if statistical.get("confidence_interval") is not None:
+
                 summary["confidence_intervals_found"] += 1
 
                 includes_null = statistical.get("includes_null")
+
                 if includes_null is True:
                     summary["intervals_including_null"] += 1
+
                 elif includes_null is False:
                     summary["intervals_excluding_null"] += 1
 
             certainty = statistical.get("certainty")
+
             if certainty in summary["certainty_levels"]:
                 summary["certainty_levels"][certainty] += 1
 
         return summary
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
     # Analyze an individual article
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
 
     def analyze_article(self, claim, article):
+
         abstract = article.get("abstract", "")
-        parsed_sentences = self.abstract_parser.parse(abstract or "")
+
+        parsed_sentences = self.abstract_parser.parse(
+            abstract or ""
+        )
+
         sentence_results = []
 
         for item in parsed_sentences:
+
             sentence = item.get("sentence", "")
-            if not isinstance(sentence, str) or not sentence.strip():
-                continue
-
-            section_type = item.get("section_type", "Other")
-
-            # Classify sentence content; use the abstract section only
-            # as a fallback when the classifier returns "Other".
-            sentence_type_result = self.sentence_classifier.classify(sentence)
-            final_type = sentence_type_result.get("type", "Other")
-            type_confidence = self.to_float(
-                sentence_type_result.get("confidence", 0.0)
-            )
 
             if (
+                not isinstance(sentence, str)
+                or not sentence.strip()
+            ):
+                continue
+
+            section_type = item.get(
+                "section_type",
+                "Other",
+            )
+
+            # Classify sentence content.
+            sentence_type_result = (
+                self.sentence_classifier.classify(sentence)
+            )
+
+            final_type = sentence_type_result.get(
+                "type",
+                "Other",
+            )
+
+            type_confidence = self.to_float(
+                sentence_type_result.get(
+                    "confidence",
+                    0.0,
+                )
+            )
+
+            # Use abstract section as a fallback.
+            if (
                 final_type == "Other"
-                and section_type not in {"Other", "Unstructured"}
+                and section_type not in {
+                    "Other",
+                    "Unstructured",
+                }
             ):
                 final_type = section_type
 
-            raw_evidence = self.relevance_filter.analyze_evidence(
-                claim, sentence
+            raw_evidence = (
+                self.relevance_filter.analyze_evidence(
+                    claim,
+                    sentence,
+                )
             )
-            evidence = self.normalize_evidence_result(raw_evidence)
+
+            evidence = self.normalize_evidence_result(
+                raw_evidence
+            )
 
             uncertainty = self.detect_uncertainty(sentence)
-            safety = self.detect_safety_signals(sentence, section_type)
 
-            statistical = self.statistical_analyzer.analyze(sentence)
+            safety = self.detect_safety_signals(
+                sentence,
+                section_type,
+            )
+
+            statistical = self.statistical_analyzer.analyze(
+                sentence
+            )
+
             if not isinstance(statistical, dict):
                 statistical = {"available": False}
 
@@ -372,27 +548,29 @@ class EvidencePipeline:
                 "safety_topic": safety["safety_topic"],
                 "safety_result": safety["safety_result"],
                 "safety_concern": safety["safety_concern"],
-                # Retained for compatibility with existing UI/code.
+
+                # Backward compatibility.
                 "is_safety_evidence": safety["safety_topic"],
+
                 "statistical_analysis": statistical,
             })
 
-        # Only result and conclusion sentences enter evidence summaries.
+        # Only result and conclusion sentences enter summaries.
         primary_results = [
             result
             for result in sentence_results
-            if result["sentence_type"] in self.PRIMARY_SENTENCE_TYPES
+            if result["sentence_type"]
+            in self.PRIMARY_SENTENCE_TYPES
         ]
 
-        # Safety analysis includes actual safety findings only.
+        # Actual safety findings only.
         safety_results = [
             result
             for result in primary_results
             if result["safety_result"]
         ]
 
-        # Effectiveness analysis excludes every safety-topic sentence,
-        # not only sentences classified as actual safety findings.
+        # Exclude safety-topic sentences from effectiveness analysis.
         effectiveness_results = [
             result
             for result in primary_results
@@ -402,47 +580,65 @@ class EvidencePipeline:
             )
         ]
 
-        overall_counts = self.count_classifications(primary_results)
+        overall_counts = self.count_classifications(
+            primary_results
+        )
+
         effectiveness_counts = self.count_classifications(
             effectiveness_results
         )
-        safety_counts = self.count_classifications(safety_results)
+
+        safety_counts = self.count_classifications(
+            safety_results
+        )
 
         safety_topic_count = sum(
-            result["safety_topic"] for result in sentence_results
+            result["safety_topic"]
+            for result in sentence_results
         )
+
         safety_concern_count = sum(
-            result["safety_concern"] for result in sentence_results
+            result["safety_concern"]
+            for result in sentence_results
         )
 
         uncertainty_count = sum(
-            result["is_uncertain"] for result in primary_results
+            result["is_uncertain"]
+            for result in primary_results
         )
 
         statistical_uncertainty_count = sum(
             1
             for result in primary_results
             if (
-                (result.get("statistical_analysis") or {}).get("available")
+                (result.get("statistical_analysis") or {}).get(
+                    "available"
+                )
                 and (result.get("statistical_analysis") or {}).get(
                     "includes_null"
                 ) is True
             )
         )
 
-        statistical_summary = self.summarize_statistics(primary_results)
+        statistical_summary = self.summarize_statistics(
+            primary_results
+        )
 
         supporting = overall_counts["Supporting"]
         contradicting = overall_counts["Contradicting"]
 
         if supporting and contradicting:
             classification = "Mixed"
+
         elif supporting > contradicting:
             classification = "Supporting"
+
         elif contradicting > supporting:
             classification = "Contradicting"
+
         elif primary_results:
             classification = "Neutral"
+
         else:
             classification = "Insufficient"
 
@@ -454,37 +650,61 @@ class EvidencePipeline:
             "url": article.get("url", ""),
             "classification": classification,
             "overall_counts": overall_counts,
+
             "effectiveness_analysis": {
                 "sentence_count": len(effectiveness_results),
                 "counts": effectiveness_counts,
             },
+
             "safety_analysis": {
                 "sentence_count": len(safety_results),
                 "counts": safety_counts,
                 "safety_topic_count": safety_topic_count,
                 "safety_concern_count": safety_concern_count,
             },
+
             "uncertainty_count": uncertainty_count,
-            "statistical_uncertainty_count": statistical_uncertainty_count,
+            "statistical_uncertainty_count": (
+                statistical_uncertainty_count
+            ),
             "statistical_summary": statistical_summary,
             "sentences": sentence_results,
         }
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
     # Analyze a medical claim
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
 
     def analyze_claim(self, claim):
-        if not isinstance(claim, str) or not claim.strip():
-            raise ValueError("Claim must be a non-empty string.")
+
+        if (
+            not isinstance(claim, str)
+            or not claim.strip()
+        ):
+            raise ValueError(
+                "Claim must be a non-empty string."
+            )
 
         claim = claim.strip()
-        category, category_confidence, keywords = self.classify_claim(claim)
 
-        articles = self.pubmed_retriever.retrieve(claim)
+        category, category_confidence, keywords = (
+            self.classify_claim(claim)
+        )
+
+        # Local Search + PubMed retrieval.
+        search_result = self.local_search_optimizer.optimize(
+            claim
+        )
+
+        articles = search_result.get(
+            "articles",
+            [],
+        )
+
         if not isinstance(articles, list):
             articles = []
 
+        # Analyze each retrieved article using existing modules.
         analyzed_articles = [
             self.analyze_article(claim, article)
             for article in articles
@@ -494,113 +714,322 @@ class EvidencePipeline:
         return {
             "status": "Analysis completed",
             "claim": claim,
+
+            # Medical classification
             "category": category,
             "category_confidence": category_confidence,
             "matched_keywords": keywords,
+
+            # Search summary
+            "search_summary": {
+                "evaluated_query_count": search_result.get(
+                    "evaluated_query_count",
+                    0,
+                ),
+
+                "retrieved_article_count": search_result.get(
+                    "retrieved_article_count",
+                    len(articles),
+                ),
+
+                "optimized_queries": search_result.get(
+                    "optimized_queries",
+                    [],
+                ),
+
+                "beam_search_results": search_result.get(
+                    "beam_search_results",
+                    [],
+                ),
+
+                "optimization_note": search_result.get(
+                    "optimization_note",
+                    "",
+                ),
+            },
+
+            # Article analysis
             "retrieved_articles": len(articles),
             "analyzed_articles": len(analyzed_articles),
             "articles": analyzed_articles,
         }
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
     # Print analysis report
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
 
     def print_report(self, result):
+
         print("\nMEDICAL FACTGUARD AI")
         print("=" * 75)
+
         print("Status:", result["status"])
         print("Claim:", result["claim"])
         print("Category:", result["category"])
-        print("Category Confidence:", result["category_confidence"])
-        print("Retrieved Articles:", result["retrieved_articles"])
-        print("Analyzed Articles:", result["analyzed_articles"])
+        print(
+            "Category Confidence:",
+            result["category_confidence"],
+        )
 
+        print(
+            "Retrieved Articles:",
+            result["retrieved_articles"],
+        )
+
+        print(
+            "Analyzed Articles:",
+            result["analyzed_articles"],
+        )
+
+        # Search optimization report
+        search_summary = result.get(
+            "search_summary",
+            {},
+        )
+
+        print("\nSEARCH OPTIMIZATION SUMMARY")
+        print("-" * 75)
+
+        print(
+            "Evaluated Queries:",
+            search_summary.get(
+                "evaluated_query_count",
+                0,
+            ),
+        )
+
+        print(
+            "Retrieved by Search:",
+            search_summary.get(
+                "retrieved_article_count",
+                0,
+            ),
+        )
+
+        print("\nOptimized Queries:")
+
+        for query in search_summary.get(
+            "optimized_queries",
+            [],
+        ):
+            print("-", query)
+
+        print(
+            "\nOptimization Note:",
+            search_summary.get(
+                "optimization_note",
+                "",
+            ),
+        )
+
+        # Individual article reports
         for article in result["articles"]:
+
             print("\n" + "=" * 75)
+
             print("PMID:", article["pmid"])
             print("Title:", article["title"])
             print("Year:", article["year"])
             print("Journal:", article["journal"])
             print("URL:", article["url"])
-            print("\nArticle Evidence Summary:", article["classification"])
+
+            print(
+                "\nArticle Evidence Summary:",
+                article["classification"],
+            )
 
             print("\nOverall Evidence Counts:")
-            for label, count in article["overall_counts"].items():
+
+            for label, count in article[
+                "overall_counts"
+            ].items():
                 print(f"{label}: {count}")
 
-            effectiveness = article["effectiveness_analysis"]
+            effectiveness = article[
+                "effectiveness_analysis"
+            ]
+
             print("\nEffectiveness Analysis:")
-            print("Sentence Count:", effectiveness["sentence_count"])
-            for label, count in effectiveness["counts"].items():
+
+            print(
+                "Sentence Count:",
+                effectiveness["sentence_count"],
+            )
+
+            for label, count in effectiveness[
+                "counts"
+            ].items():
                 print(f"{label}: {count}")
 
             safety = article["safety_analysis"]
+
             print("\nSafety Analysis:")
-            print("Actual Safety Result Count:", safety["sentence_count"])
-            print("Safety Topic Count:", safety["safety_topic_count"])
-            print("Safety Concern Count:", safety["safety_concern_count"])
+
+            print(
+                "Actual Safety Result Count:",
+                safety["sentence_count"],
+            )
+
+            print(
+                "Safety Topic Count:",
+                safety["safety_topic_count"],
+            )
+
+            print(
+                "Safety Concern Count:",
+                safety["safety_concern_count"],
+            )
+
             for label, count in safety["counts"].items():
                 print(f"{label}: {count}")
 
             print("\nUncertainty Analysis:")
-            print("Textual Uncertainty:", article["uncertainty_count"])
+
+            print(
+                "Textual Uncertainty:",
+                article["uncertainty_count"],
+            )
+
             print(
                 "Intervals Including Null:",
                 article["statistical_uncertainty_count"],
             )
 
             print("\nStatistical Summary:")
-            for key, value in article["statistical_summary"].items():
+
+            for key, value in article[
+                "statistical_summary"
+            ].items():
                 print(f"{key}: {value}")
 
             print("\nSentence Details:")
+
             for sentence in article["sentences"]:
+
                 print("\nSentence:", sentence["sentence"])
-                print("Original Section:", sentence["section"])
+
+                print(
+                    "Original Section:",
+                    sentence["section"],
+                )
+
                 print(
                     "Original Section Type:",
                     sentence["original_section_type"],
                 )
-                print("Sentence Type:", sentence["sentence_type"])
-                print("Evidence:", sentence["evidence_classification"])
-                print("Relevance:", round(sentence["relevance"], 4))
+
+                print(
+                    "Sentence Type:",
+                    sentence["sentence_type"],
+                )
+
+                print(
+                    "Evidence:",
+                    sentence["evidence_classification"],
+                )
+
+                print(
+                    "Relevance:",
+                    round(sentence["relevance"], 4),
+                )
+
                 print(
                     "Evidence Confidence:",
-                    round(sentence["evidence_confidence"], 4),
+                    round(
+                        sentence["evidence_confidence"],
+                        4,
+                    ),
                 )
-                print("Uncertain:", sentence["is_uncertain"])
-                print("Safety Topic:", sentence["safety_topic"])
-                print("Safety Result:", sentence["safety_result"])
-                print("Safety Concern:", sentence["safety_concern"])
 
-                statistical = sentence["statistical_analysis"]
+                print(
+                    "Uncertain:",
+                    sentence["is_uncertain"],
+                )
+
+                print(
+                    "Safety Topic:",
+                    sentence["safety_topic"],
+                )
+
+                print(
+                    "Safety Result:",
+                    sentence["safety_result"],
+                )
+
+                print(
+                    "Safety Concern:",
+                    sentence["safety_concern"],
+                )
+
+                statistical = sentence[
+                    "statistical_analysis"
+                ]
+
                 if statistical.get("available"):
+
                     print("\nStatistical Analysis:")
-                    print("Measure:", statistical.get("measure"))
-                    print("Estimate:", statistical.get("estimate"))
+
+                    print(
+                        "Measure:",
+                        statistical.get("measure"),
+                    )
+
+                    print(
+                        "Estimate:",
+                        statistical.get("estimate"),
+                    )
+
                     print(
                         "Confidence Interval:",
                         statistical.get("confidence_interval"),
                     )
-                    print("Null Value:", statistical.get("null_value"))
-                    print("Includes Null:", statistical.get("includes_null"))
+
+                    print(
+                        "Null Value:",
+                        statistical.get("null_value"),
+                    )
+
+                    print(
+                        "Includes Null:",
+                        statistical.get("includes_null"),
+                    )
+
                     print(
                         "Interpretation:",
-                        statistical.get("statistical_interpretation"),
+                        statistical.get(
+                            "statistical_interpretation"
+                        ),
                     )
-                    print("Study Certainty:", statistical.get("certainty"))
+
+                    print(
+                        "Study Certainty:",
+                        statistical.get("certainty"),
+                    )
 
                 print("-" * 70)
 
 
 if __name__ == "__main__":
+
     pipeline = EvidencePipeline()
-    test_claim = "Vaccines reduce the risk of infectious diseases."
+
+    test_claim = (
+        "Vaccines reduce the risk of infectious diseases."
+    )
 
     try:
+
         result = pipeline.analyze_claim(test_claim)
+
         pipeline.print_report(result)
+
     except Exception as error:
+
         print("\nANALYSIS ERROR")
-        print(f"{type(error).__name__}: {error}")
+
+        print(
+            f"{type(error).__name__}: {error}"
+        )
+
+    finally:
+        pipeline.pubmed_retriever.close()
