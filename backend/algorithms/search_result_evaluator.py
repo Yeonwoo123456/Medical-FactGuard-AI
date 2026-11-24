@@ -1,269 +1,217 @@
-
 import re
-import math
+from typing import Dict, List, Set
 
-from collections import Counter
-from typing import Dict, List, Any
+from sentence_transformers import SentenceTransformer
+from backend.algorithms.evidence_analysis import EvidenceAnalyzer
 
 
-class SearchResultEvaluator:
+class RelevanceFilter:
     """
-    Evaluates how relevant PubMed articles are to a medical claim.
+    Conservative sentence-level relevance gate.
 
-    Important:
-    - Relevance does NOT mean truth.
-    - A high score does NOT mean an article supports the claim.
-    - This is a lexical matching method, not a semantic or clinical evaluation.
+    Semantic similarity is not sufficient by itself: a sentence must also
+    share the claim's key medical subject and (when explicit) clinical endpoint.
+    Relevance is textual alignment, not evidence that a claim is true.
     """
+
+    DEFAULT_MODEL = "all-MiniLM-L6-v2"
 
     STOPWORDS = {
-        "a", "an", "the", "is", "are", "was", "were",
-        "be", "been", "being", "to", "of", "in", "on",
-        "for", "with", "by", "from", "and", "or", "but",
-        "that", "this", "these", "those", "it", "its",
-        "as", "at", "into", "about", "than", "then",
-        "can", "could", "may", "might", "should", "would",
-        "does", "do", "did", "has", "have", "had",
-        "not", "no", "such", "their", "they", "them",
-        "we", "our", "us", "which", "who", "what",
-        "when", "where", "while", "after", "before",
+        "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+        "to", "of", "in", "on", "for", "with", "by", "from", "and", "or",
+        "but", "that", "this", "these", "those", "it", "its", "can", "could",
+        "may", "might", "should", "would", "does", "do", "did", "has", "have",
+        "had", "not", "no", "than", "into", "after", "before", "among",
+        "which", "who", "their", "they", "we", "our", "such", "also",
     }
 
-    def __init__(self):
-        pass
+    SUBJECT_GROUPS = {
+        "vitamin_c": (r"\bvitamin\s*c\b", r"\bascorbic\s*acid\b"),
+        "zinc": (r"\bzinc\b",),
+        "vaccine": (r"\bvaccin(?:e|es|ation|ations)\b", r"\bimmuni[sz]ation\b"),
+        "common_cold": (r"\bcommon cold\b", r"\bupper respiratory(?: tract)? infection\b", r"\brhinovirus\b"),
+        "cancer": (r"\bcancer\b", r"\bneoplasm\b", r"\btumou?r\b", r"\bcarcinoma\b"),
+        "covid": (r"\bcovid(?:-19)?\b", r"\bsars-cov-2\b"),
+        "hypertension": (r"\bhypertension\b", r"\bblood pressure\b"),
+        "diabetes": (r"\bdiabetes\b", r"\bglycemic\b", r"\bblood glucose\b"),
+        "pregnancy": (r"\bpregnan(?:t|cy)\b", r"\bmaternal\b", r"\bfetal\b"),
+    }
 
-    def tokenize(self, text: str) -> List[str]:
-        """
-        Converts text into normalized tokens.
-        """
+    ENDPOINT_GROUPS = {
+        "prevention": (
+            r"\bprevent(?:s|ed|ing|ion)?\b", r"\bincidence\b",
+            r"\boccurrence\b", r"\bnew cases?\b", r"\brisk of (?:getting|developing|contracting)\b",
+            r"\b발병률\b", r"\b예방\b",
+        ),
+        "duration": (
+            r"\bduration\b", r"\blength of\b", r"\bhow long\b",
+            r"\bshorten(?:s|ed|ing)?\b", r"\brecovery time\b", r"\b기간\b",
+        ),
+        "severity": (
+            r"\bseverity\b", r"\bsevere\b", r"\bsymptom score\b",
+            r"\bsymptom burden\b", r"\b증상\b", r"\b중증도\b",
+        ),
+        "mortality": (
+            r"\bmortality\b", r"\bdeath\b", r"\bsurvival\b",
+            r"\b사망률\b",
+        ),
+        "safety": (
+            r"\badverse events?\b", r"\bside effects?\b", r"\btoxicity\b",
+            r"\bharms?\b", r"\bsafety\b", r"\b부작용\b", r"\b안전성\b",
+        ),
+        "blood_pressure": (
+            r"\bblood pressure\b", r"\bsystolic\b", r"\bdiastolic\b",
+            r"\b혈압\b",
+        ),
+    }
 
-        if not text:
-            return []
-
-        tokens = re.findall(
-            r"[a-zA-Z0-9]+",
-            text.lower()
-        )
-
-        return [
-            token
-            for token in tokens
-            if token not in self.STOPWORDS
-            and len(token) > 1
-        ]
-
-    def calculate_cosine_similarity(
+    def __init__(
         self,
-        text_a: str,
-        text_b: str
-    ) -> float:
-        """
-        Calculates lexical cosine similarity.
-        """
+        model_name=DEFAULT_MODEL,
+        relevance_threshold=0.38,
+        evidence_analyzer=None,
+        lexical_threshold=0.12,
+    ):
+        if not -1.0 <= relevance_threshold <= 1.0:
+            raise ValueError("relevance_threshold must be between -1 and 1.")
+        if not 0.0 <= lexical_threshold <= 1.0:
+            raise ValueError("lexical_threshold must be between 0 and 1.")
 
-        tokens_a = self.tokenize(text_a)
-        tokens_b = self.tokenize(text_b)
+        self.model = SentenceTransformer(model_name)
+        self.relevance_threshold = float(relevance_threshold)
+        self.lexical_threshold = float(lexical_threshold)
+        self.evidence_analyzer = evidence_analyzer or EvidenceAnalyzer()
 
-        if not tokens_a or not tokens_b:
-            return 0.0
+    @staticmethod
+    def _normalize(text: str) -> str:
+        text = (text or "").casefold()
+        text = text.replace("vitamin-c", "vitamin c")
+        return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9가-힣%./+-]", " ", text)).strip()
 
-        vector_a = Counter(tokens_a)
-        vector_b = Counter(tokens_b)
-
-        common_tokens = set(vector_a) & set(vector_b)
-
-        dot_product = sum(
-            vector_a[token] * vector_b[token]
-            for token in common_tokens
-        )
-
-        magnitude_a = math.sqrt(
-            sum(value ** 2 for value in vector_a.values())
-        )
-
-        magnitude_b = math.sqrt(
-            sum(value ** 2 for value in vector_b.values())
-        )
-
-        if magnitude_a == 0 or magnitude_b == 0:
-            return 0.0
-
-        return dot_product / (
-            magnitude_a * magnitude_b
-        )
-
-    def evaluate_article(
-        self,
-        claim: str,
-        article: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Evaluates one article against a claim.
-
-        Title relevance receives 40%.
-        Abstract relevance receives 60%.
-        """
-
-        title = article.get("title", "")
-        abstract = article.get("abstract", "")
-
-        title_score = self.calculate_cosine_similarity(
-            claim,
-            title
-        )
-
-        abstract_score = self.calculate_cosine_similarity(
-            claim,
-            abstract
-        )
-
-        relevance_score = (
-            0.4 * title_score
-            + 0.6 * abstract_score
-        )
-
+    def _tokens(self, text: str) -> Set[str]:
         return {
-            "pmid": article.get("pmid"),
-            "title_score": round(title_score, 4),
-            "abstract_score": round(abstract_score, 4),
-            "relevance_score": round(relevance_score, 4),
+            token for token in re.findall(r"[a-z]{3,}|[가-힣]{2,}", self._normalize(text))
+            if token not in self.STOPWORDS
         }
 
-    def evaluate_articles(
-        self,
-        claim: str,
-        articles: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        Evaluates and ranks multiple articles.
-        """
-
-        evaluated = []
-
-        for article in articles:
-
-            result = self.evaluate_article(
-                claim,
-                article
-            )
-
-            evaluated.append({
-                **article,
-                "relevance": result,
-            })
-
-        evaluated.sort(
-            key=lambda item: item["relevance"]["relevance_score"],
-            reverse=True
-        )
-
-        return evaluated
-
-    def calculate_query_score(
-        self,
-        claim: str,
-        articles: List[Dict[str, Any]],
-        top_k: int = 5
-    ) -> float:
-        """
-        Calculates the overall quality of a search query
-        based on the relevance of its retrieved articles.
-
-        This is a retrieval relevance score, not a truth score.
-        """
-
-        if not articles:
-            return 0.0
-
-        evaluated = self.evaluate_articles(
-            claim,
-            articles
-        )
-
-        scores = [
-            item["relevance"]["relevance_score"]
-            for item in evaluated[:top_k]
+    def _matched_groups(self, text: str, groups: Dict[str, tuple]) -> List[str]:
+        normalized = self._normalize(text)
+        return [
+            name for name, patterns in groups.items()
+            if any(re.search(pattern, normalized, re.IGNORECASE) for pattern in patterns)
         ]
 
-        if not scores:
-            return 0.0
+    def _alignment(self, claim: str, evidence: str) -> Dict[str, object]:
+        claim_subjects = self._matched_groups(claim, self.SUBJECT_GROUPS)
+        evidence_subjects = self._matched_groups(evidence, self.SUBJECT_GROUPS)
+        claim_endpoints = self._matched_groups(claim, self.ENDPOINT_GROUPS)
+        evidence_endpoints = self._matched_groups(evidence, self.ENDPOINT_GROUPS)
 
-        mean_score = sum(scores) / len(scores)
+        # If the claim names a recognized intervention/disease, require at
+        # least one matching subject anchor in the sentence or article title.
+        subject_ok = not claim_subjects or set(claim_subjects).issubset(set(evidence_subjects))
 
-        claim_tokens = set(self.tokenize(claim))
+        # Explicit endpoints must match. This prevents prevention evidence
+        # from being replaced by duration/severity evidence, and vice versa.
+        endpoint_ok = not claim_endpoints or set(claim_endpoints).issubset(set(evidence_endpoints))
 
-        matched_tokens = set()
-
-        for article in evaluated[:top_k]:
-
-            text = (
-                article.get("title", "")
-                + " "
-                + article.get("abstract", "")
-            )
-
-            matched_tokens.update(
-                self.tokenize(text)
-            )
-
-        if not claim_tokens:
-            coverage = 0.0
-        else:
-            coverage = (
-                len(claim_tokens & matched_tokens)
-                / len(claim_tokens)
-            )
-
-        final_score = (
-            0.85 * mean_score
-            + 0.15 * coverage
+        claim_tokens = self._tokens(claim)
+        evidence_tokens = self._tokens(evidence)
+        lexical_coverage = (
+            len(claim_tokens & evidence_tokens) / len(claim_tokens)
+            if claim_tokens else 0.0
         )
 
-        return round(final_score, 4)
+        # Recognized subject and endpoint anchors carry more weight than
+        # generic shared words such as "study", "effect", or "risk".
+        return {
+            "subject_ok": subject_ok,
+            "endpoint_ok": endpoint_ok,
+            "claim_subjects": claim_subjects,
+            "evidence_subjects": evidence_subjects,
+            "claim_endpoints": claim_endpoints,
+            "evidence_endpoints": evidence_endpoints,
+            "lexical_coverage": lexical_coverage,
+        }
+
+    def calculate_relevance(self, claim, evidence):
+        if not isinstance(claim, str) or not isinstance(evidence, str):
+            raise TypeError("Claim and evidence must be strings.")
+        if not claim.strip() or not evidence.strip():
+            return 0.0
+        embeddings = self.model.encode(
+            [claim, evidence],
+            normalize_embeddings=True,
+            convert_to_tensor=True,
+        )
+        return float((embeddings[0] @ embeddings[1]).item())
+
+    def analyze_evidence(self, claim, evidence):
+        if not isinstance(claim, str) or not isinstance(evidence, str):
+            raise TypeError("Claim and evidence must be strings.")
+        if not claim.strip() or not evidence.strip():
+            return {
+                "relevance": 0.0, "relevance_status": "Insufficient",
+                "classification": "Insufficient", "confidence": 0.0,
+                "scores": {}, "reason": "Claim or evidence is empty.",
+            }
+
+        relevance = self.calculate_relevance(claim, evidence)
+        alignment = self._alignment(claim, evidence)
+        subject_ok = alignment["subject_ok"]
+        endpoint_ok = alignment["endpoint_ok"]
+        lexical_coverage = float(alignment["lexical_coverage"])
+
+        # When a known subject/endpoint is explicitly named, a semantic score
+        # cannot override a failed clinical-topic gate.
+        if not subject_ok:
+            reason = "The evidence does not mention the claim's key medical subject."
+        elif not endpoint_ok:
+            reason = "The evidence addresses a different clinical outcome from the claim."
+        elif relevance < self.relevance_threshold:
+            reason = "Semantic similarity is below the relevance threshold."
+        elif lexical_coverage < self.lexical_threshold and not (
+            alignment["claim_subjects"] and alignment["claim_endpoints"]
+        ):
+            reason = "The evidence shares too little claim-specific terminology."
+
+        else:
+            nli_result = self.evidence_analyzer.analyze(claim, evidence)
+            return {
+                "relevance": relevance,
+                "relevance_status": "Relevant",
+                "classification": nli_result["label"],
+                "predicted_label": nli_result.get("predicted_label", nli_result["label"]),
+                "confidence": nli_result["confidence"],
+                "margin": nli_result.get("margin"),
+                "scores": nli_result["scores"],
+                "reason": nli_result["reason"],
+                "alignment": alignment,
+            }
+
+        return {
+            "relevance": relevance,
+            "relevance_status": "Low Relevance",
+            "classification": "Insufficient",
+            "predicted_label": "Insufficient",
+            "confidence": 0.0,
+            "margin": None,
+            "scores": {},
+            "reason": reason,
+            "alignment": alignment,
+        }
 
 
 if __name__ == "__main__":
-
-    evaluator = SearchResultEvaluator()
-
-    claim = (
-        "Vaccines reduce the risk of severe infectious disease."
-    )
-
-    sample_articles = [
-        {
-            "pmid": "100001",
-            "title": "Vaccine effectiveness against severe infectious diseases",
-            "abstract": (
-                "This study evaluates vaccine effectiveness "
-                "in reducing severe disease outcomes."
-            ),
-        },
-        {
-            "pmid": "100002",
-            "title": "A study about hospital management",
-            "abstract": (
-                "This research examines hospital administration "
-                "and healthcare management."
-            ),
-        },
+    filter_system = RelevanceFilter()
+    claim = "Vitamin C prevents the common cold."
+    samples = [
+        "Vitamin C supplementation did not prevent common colds.",
+        "Vitamin C may reduce the duration of an ongoing cold.",
+        "Zinc supplementation may reduce the duration of the common cold.",
+        "Hospital admission rates changed during the study.",
     ]
-
-    results = evaluator.evaluate_articles(
-        claim,
-        sample_articles
-    )
-
-    for article in results:
-        print("\nTitle:", article["title"])
-        print(
-            "Relevance:",
-            article["relevance"]["relevance_score"]
-        )
-
-    query_score = evaluator.calculate_query_score(
-        claim,
-        sample_articles
-    )
-
-    print("\nOverall query score:", query_score)
+    for text in samples:
+        result = filter_system.analyze_evidence(claim, text)
+        print(text)
+        print(result["relevance_status"], result["classification"], result["reason"])

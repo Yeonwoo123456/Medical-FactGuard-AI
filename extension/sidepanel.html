@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#edf4fc">
+    <title>메디오 AI</title>
+    <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+    <div class="app-container">
+        <nav class="topbar" aria-label="Main navigation">
+            <div class="brand">
+                <div class="logo" aria-hidden="true">
+                    <span>+</span>
+                </div>
+                <div class="brand-copy">
+                    <h1 style="font-size: 2em;">메디오 AI</h1>
+                    <p>Clinical Research Verification</p>
+                </div>
+            </div>
+            <div class="topbar-actions">
+                <span class="nav-chip active">Overview</span>
+                <label class="language-control" for="languageSelect">
+                    <span class="sr-only">Language</span>
+                    <select id="languageSelect" aria-label="Language">
+                        <option value="en">EN</option>
+                        <option value="ko">KO</option>
+                    </select>
+                </label>
+            </div>
+        </nav>
+
+        <main>
+            <section class="welcome-section panel">
+                <div class="welcome-copy">
+                    <div class="eyebrow">
+                        <span class="status-dot"></span>
+                        <span id="systemStatus">READY TO ANALYZE</span>
+                    </div>
+                    <h2 id="welcomeTitle">Verify Medical Information.</h2>
+                    <p id="welcomeDescription">Analyze medical claims and discover scientific evidence across the web.</p>
+                </div>
+                <div class="welcome-mark" aria-hidden="true">
+                    <div class="mark-ring"></div>
+                    <div class="mark-shield">+</div>
+                    <span class="mark-orbit orbit-one"></span>
+                    <span class="mark-orbit orbit-two"></span>
+                </div>
+            </section>
+
+            <div class="overview-grid">
+                <section class="page-section panel">
+                    <div class="section-heading">
+                        <div>
+                            <span class="section-kicker">BROWSING CONTEXT</span>
+                            <h3 id="pageHeading">Current Page</h3>
+                        </div>
+                        <span class="heading-icon" aria-hidden="true">↗</span>
+                    </div>
+                    <div class="page-card">
+                        <span class="mini-label">ACTIVE WEBPAGE</span>
+                        <p id="pageTitle">Loading page...</p>
+                        <span id="pageDomain">---</span>
+                    </div>
+                </section>
+
+                <section class="mode-section panel">
+                    <div class="section-heading">
+                        <div>
+                            <span class="section-kicker">CHOOSE WORKFLOW</span>
+                            <h3 id="modeHeading">Analysis Mode</h3>
+                        </div>
+                        <span class="heading-icon" aria-hidden="true">⌁</span>
+                    </div>
+
+                    <div class="mode-card secondary-mode">
+                        <div class="mode-icon" aria-hidden="true">⌖</div>
+                        <div class="mode-information">
+                            <h4 id="selectedTextTitle">Selected Text</h4>
+                            <p id="selectedTextDescription">Right-click selected text to analyze a specific claim.</p>
+                        </div>
+                        <span class="mode-label" id="contextMenuLabel">Right-click</span>
+                    </div>
+                </section>
+            </div>
+
+            <section class="claims-section panel">
+                <div class="section-heading">
+                    <div>
+                        <span class="section-kicker">DETECTED CONTENT</span>
+                        <h3 id="claimsHeading">Detected Claims</h3>
+                    </div>
+                    <span id="claimCount">0</span>
+                </div>
+                <div id="claimsContainer" class="claims-container">
+                    <div class="empty-state" id="emptyState">
+                        <div class="empty-icon" aria-hidden="true">⌕</div>
+                        <strong>No claims detected yet.</strong>
+                        <p>Scan a webpage or select text to begin.</p>
+                    </div>
+                </div>
+            </section>
+
+            <section class="result-section panel" id="resultSection" hidden>
+                <div class="section-heading">
+                    <div>
+                        <span class="section-kicker">EVIDENCE REVIEW</span>
+                        <h3 id="resultHeading">Analysis Results</h3>
+                    </div>
+                    <span class="result-live-label">LIVE RESULT</span>
+                </div>
+                <div id="resultContainer"></div>
+            </section>
+        </main>
+
+        <footer>
+            <p class="footer-brand">메디오 AI <span>·</span> v1.0.0</p>
+            <p id="disclaimer">For informational purposes only. Not medical advice.</p>
+        </footer>
+    </div>
+    <script src="sidepanel.js"></script>
+</body>
+</html>

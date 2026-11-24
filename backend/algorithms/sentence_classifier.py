@@ -131,8 +131,15 @@ class SentenceClassifier:
                 r"\bthe risk ratio was\b",
                 r"\bthe mean difference was\b",
 
+                # Prevention/incidence outcomes in clinical abstracts.
+                r"\b(?:did not|does not|do not|failed to|was unable to) prevent\b",
+                r"\b(?:prevented|prevents|preventing)\b",
+                r"\b(?:incidence|occurrence) of (?:the )?(?:common )?cold\b",
+                r"\b(?:risk ratio|relative risk|odds ratio|hazard ratio)\s*(?:was|of|=)\b",
+                r"\b(?:no effect|little effect) on (?:the )?(?:incidence|risk)\b",
+
                 # General outcome changes
-                r"\b(?:reduced|decreased|increased|improved|worsened)\s+\w+",
+                r"\b(?:reduced|decreased|increased|improved|worsened|halved|doubled)\s+\w+",
             ],
 
             "Safety Result": [
@@ -329,11 +336,6 @@ class SentenceClassifier:
         elif scores["Research Objective"] > 0:
             selected_category = "Research Objective"
 
-        # Priority 3: Research methods
-
-        elif scores["Research Method"] > 0:
-            selected_category = "Research Method"
-
         else:
 
             has_safety_term = bool(
@@ -353,10 +355,14 @@ class SentenceClassifier:
                 # Conclusion takes priority over Research Result
                 # when a conclusion pattern is explicitly detected.
 
+                # A sentence can mention its study design/sample and still
+                # report an outcome ("Across 5 trials ... did not prevent...").
+                # Give explicit findings priority over method vocabulary.
                 priority_order = [
                     "Conclusion",
                     "Research Result",
-                    "Background"
+                    "Research Method",
+                    "Background",
                 ]
 
                 selected_category = max(

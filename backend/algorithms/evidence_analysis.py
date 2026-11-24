@@ -40,7 +40,8 @@ class EvidenceAnalyzer:
 
     def _normalize_label(self, raw_label, index):
 
-        label = str(raw_label).strip().lower()
+        # Normalize common label formatting variations.
+        label = str(raw_label).strip().lower().replace("-", "_").replace(" ", "_")
 
         if "entail" in label or "support" in label:
             return "Supporting"
@@ -53,10 +54,14 @@ class EvidenceAnalyzer:
 
         # Fallback is only safe for the known model's
         # documented three-class output order.
+        # Numeric string labels are handled in the same way as LABEL_0 etc.
 
         if (
             self.model_name == "cross-encoder/nli-deberta-v3-small"
-            and label.startswith("label_")
+            and (
+                label.startswith("label_")
+                or label.isdigit()
+            )
         ):
 
             fallback_labels = {
@@ -95,7 +100,6 @@ class EvidenceAnalyzer:
 
         # Evidence = Premise
         # Claim = Hypothesis
-
         inputs = self.tokenizer(
             evidence,
             claim,

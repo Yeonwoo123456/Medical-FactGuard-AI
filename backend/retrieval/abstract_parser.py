@@ -2,23 +2,16 @@ import re
 
 
 class AbstractParser:
+    """Parse PubMed abstracts and discard obvious non-sentence artifacts."""
 
     def __init__(self):
-
-        # --------------------------------------------------
-        # Section Mapping
-        # --------------------------------------------------
-
         self.section_mapping = {
-
             "BACKGROUND": "Background",
             "INTRODUCTION": "Background",
-
             "OBJECTIVE": "Research Objective",
             "OBJECTIVES": "Research Objective",
             "AIM": "Research Objective",
             "AIMS": "Research Objective",
-
             "METHOD": "Research Method",
             "METHODS": "Research Method",
             "METHODOLOGY": "Research Method",
@@ -29,332 +22,156 @@ class AbstractParser:
             "DATA COLLECTION AND ANALYSIS": "Research Method",
             "PARTICIPANTS": "Research Method",
             "INTERVENTIONS": "Research Method",
-
             "RESULT": "Research Result",
             "RESULTS": "Research Result",
             "MAIN RESULTS": "Research Result",
             "FINDINGS": "Research Result",
             "EFFICACY ENDPOINTS": "Research Result",
-
             "CONCLUSION": "Conclusion",
             "CONCLUSIONS": "Conclusion",
             "AUTHORS' CONCLUSIONS": "Conclusion",
-
             "ADVERSE EFFECTS": "Safety Result",
             "ADVERSE EVENTS": "Safety Result",
             "SAFETY RESULTS": "Safety Result",
             "PREGNANCY OUTCOMES": "Safety Result",
-
             "RECOMMENDATION": "Recommendation",
-            "RECOMMENDATIONS": "Recommendation"
+            "RECOMMENDATIONS": "Recommendation",
         }
 
-        section_names = sorted(
-            self.section_mapping.keys(),
-            key=len,
-            reverse=True
-        )
-
-        heading_pattern = "|".join(
-            re.escape(name)
-            for name in section_names
-        )
-
-        # Recognizes:
-        # BACKGROUND: ...
-        # METHODS: ...
-        # Adverse effectsThe risk ...
-        #
-        # The second form handles missing spaces
-        # between headings and their content.
-
+        section_names = sorted(self.section_mapping, key=len, reverse=True)
+        heading_pattern = "|".join(re.escape(name) for name in section_names)
         self.section_pattern = re.compile(
-            r"(?<![A-Za-z])("
-            + heading_pattern
-            + r")"
+            r"(?<![A-Za-z])(" + heading_pattern + r")"
             r"(?::\s*|(?=(?-i:[A-Z])))",
-            re.IGNORECASE
+            re.IGNORECASE,
         )
-
-        # --------------------------------------------------
-        # Abbreviations
-        # --------------------------------------------------
 
         self.abbreviations = [
-            "e.g.",
-            "i.e.",
-            "Dr.",
-            "Mr.",
-            "Mrs.",
-            "Prof.",
-            "vs.",
-            "etc.",
-            "et al.",
-            "Fig.",
-            "No.",
-            "approx.",
-            "Inc.",
-            "Ltd."
+            "e.g.", "i.e.", "Dr.", "Mr.", "Mrs.", "Prof.", "vs.",
+            "etc.", "et al.", "Fig.", "No.", "approx.", "Inc.", "Ltd.",
         ]
 
-    # --------------------------------------------------
-    # Normalize Abstract
-    # --------------------------------------------------
+        self.numeric_identifier_list_pattern = re.compile(
+            r"^\s*(?:\d{1,3}(?:,\d{3})+|\d{6,})"
+            r"(?:\s*[;,]\s*(?:\d{1,3}(?:,\d{3})+|\d{6,})){2,}"
+            r"\s*[.;]?\s*$"
+        )
 
     def normalize_text(self, text):
-
         if not isinstance(text, str):
             return ""
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        text = re.sub(r"[ \t]+", " ", text)
+        text = re.sub(r"\n+", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
 
-        text = text.replace("\r\n", "\n")
-        text = text.replace("\r", "\n")
-
-        text = re.sub(
-            r"[ \t]+",
-            " ",
-            text
-        )
-
-        text = re.sub(
-            r"\n+",
-            " ",
-            text
-        )
-
-        text = re.sub(
-            r"\s+",
-            " ",
-            text
-        )
-
-        return text.strip()
-
-    # --------------------------------------------------
-    # Extract Sections
-    # --------------------------------------------------
+    def is_noise_sentence(self, sentence):
+        """Return True only for clear non-prose identifier/list artifacts."""
+        if not isinstance(sentence, str):
+            return True
+        text = sentence.strip()
+        if not text:
+            return True
+        if self.numeric_identifier_list_pattern.fullmatch(text):
+            return True
+        letters = re.findall(r"[A-Za-z]", text)
+        digits = re.findall(r"\d", text)
+        if len(digits) >= 18 and len(letters) <= 2:
+            return True
+        return False
 
     def extract_sections(self, abstract):
-
         text = self.normalize_text(abstract)
-
         if not text:
             return []
 
-        matches = list(
-            self.section_pattern.finditer(text)
-        )
-
+        matches = list(self.section_pattern.finditer(text))
         if not matches:
-
             return [{
                 "section": "Unstructured",
                 "section_type": "Other",
-                "text": text
+                "text": text,
             }]
 
         sections = []
-
-        # Text before the first heading
-
         prefix = text[:matches[0].start()].strip()
-
         if prefix:
-
             sections.append({
                 "section": "Unlabeled",
                 "section_type": "Other",
-                "text": prefix
+                "text": prefix,
             })
 
         for index, match in enumerate(matches):
-
             start = match.end()
-
-            if index + 1 < len(matches):
-                end = matches[index + 1].start()
-            else:
-                end = len(text)
-
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
             section_name = match.group(1).upper()
-
             section_text = text[start:end].strip()
-
-            if not section_text:
-                continue
-
-            sections.append({
-                "section": section_name,
-                "section_type": self.section_mapping[
-                    section_name
-                ],
-                "text": section_text
-            })
-
+            if section_text:
+                sections.append({
+                    "section": section_name,
+                    "section_type": self.section_mapping[section_name],
+                    "text": section_text,
+                })
         return sections
 
-    # --------------------------------------------------
-    # Protect Special Periods
-    # --------------------------------------------------
-
     def protect_special_periods(self, text):
-
         protected = text
         tokens = {}
-
-        for index, abbreviation in enumerate(
-            self.abbreviations
-        ):
-
+        for index, abbreviation in enumerate(self.abbreviations):
             token = f"ABBREVIATIONTOKEN{index}END"
-
-            pattern = re.compile(
+            protected = re.sub(
                 re.escape(abbreviation),
-                re.IGNORECASE
-            )
-
-            protected = pattern.sub(
                 token,
-                protected
+                protected,
+                flags=re.IGNORECASE,
             )
-
             tokens[token] = abbreviation
-
-        # Protect decimal points:
-        # 3.14 -> 3DECIMALPOINTTOKEN14
-
-        protected = re.sub(
-            r"(?<=\d)\.(?=\d)",
-            "DECIMALPOINTTOKEN",
-            protected
-        )
-
+        protected = re.sub(r"(?<=\d)\.(?=\d)", "DECIMALPOINTTOKEN", protected)
         return protected, tokens
 
-    # --------------------------------------------------
-    # Split Sentences
-    # --------------------------------------------------
-
     def split_sentences(self, text):
-
         text = self.normalize_text(text)
-
         if not text:
             return []
 
-        protected, tokens = self.protect_special_periods(
-            text
-        )
-
-        # Split after sentence-ending punctuation.
-        # Also supports missing spaces before uppercase
-        # letters, e.g. "infection.The results..."
-
+        protected, tokens = self.protect_special_periods(text)
         parts = re.split(
             r"(?<=[.!?])\s+|(?<=[.!?])(?=[A-Z])",
-            protected
+            protected,
         )
 
         sentences = []
-
         for part in parts:
-
             sentence = part.strip()
-
             if not sentence:
                 continue
-
-            # Restore abbreviations
-
             for token, original in tokens.items():
-
-                sentence = sentence.replace(
-                    token,
-                    original
-                )
-
-            # Restore decimal points
-
-            sentence = sentence.replace(
-                "DECIMALPOINTTOKEN",
-                "."
-            )
-
-            # Keep short but meaningful sentences.
-            # Avoid arbitrary length-based deletion.
-
-            if sentence:
+                sentence = sentence.replace(token, original)
+            sentence = sentence.replace("DECIMALPOINTTOKEN", ".")
+            if sentence and not self.is_noise_sentence(sentence):
                 sentences.append(sentence)
-
         return sentences
 
-    # --------------------------------------------------
-    # Parse Full Abstract
-    # --------------------------------------------------
-
     def parse(self, abstract):
-
-        sections = self.extract_sections(abstract)
-
         parsed_sentences = []
-
-        for section in sections:
-
-            sentences = self.split_sentences(
-                section["text"]
-            )
-
-            for sentence in sentences:
-
+        for section in self.extract_sections(abstract):
+            for sentence in self.split_sentences(section["text"]):
                 parsed_sentences.append({
-
                     "section": section["section"],
-
                     "section_type": section["section_type"],
-
-                    "sentence": sentence
-
+                    "sentence": sentence,
                 })
-
         return parsed_sentences
 
 
-# --------------------------------------------------
-# Manual Test
-# --------------------------------------------------
-
 if __name__ == "__main__":
-
     parser = AbstractParser()
-
-    sample_abstract = """
-    BACKGROUND: Persistent HPV infection is associated
-    with cervical cancer. HPV vaccines can prevent infection.
-
-    OBJECTIVES: To evaluate vaccine protection and safety.
-
-    METHODS: We included 26 trials with 73,428 participants.
-
-    MAIN RESULTS: Vaccines reduced the risk of cervical precancer.
-    Adverse effectsThe risk of serious adverse events was similar
-    between control and HPV vaccines.
-
-    Pregnancy outcomesAmong those who became pregnant during
-    the studies, we did not find an increased risk of miscarriage.
-
-    The effects on congenital abnormalities and stillbirths
-    are uncertain.
-
-    AUTHORS' CONCLUSIONS: HPV vaccines protect against
-    cervical precancer.
-    """
-
-    results = parser.parse(sample_abstract)
-
-    print("\nABSTRACT PARSER RESULTS")
-    print("=" * 70)
-
-    for item in results:
-
-        print("\nSection:", item["section"])
-        print("Section Type:", item["section_type"])
-        print("Sentence:", item["sentence"])
+    sample = (
+        "METHODS: We included 26 trials with 73,428 participants. "
+        "RESULTS: Vitamin C did not prevent common colds in the general population. "
+        "CONCLUSIONS: The evidence does not support routine supplementation. "
+        "3,963,325; 3,963,328; 3,969,019; 3,969,020."
+    )
+    for item in parser.parse(sample):
+        print(item)

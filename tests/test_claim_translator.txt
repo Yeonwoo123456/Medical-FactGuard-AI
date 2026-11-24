@@ -1,0 +1,75 @@
+import re
+
+from backend.translation.claim_translator import ClaimTranslator
+
+
+class FakeResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self.payload
+
+
+class FakeSession:
+    def __init__(self):
+        self.headers = {}
+        self.last_params = None
+
+    def get(self, url, params, timeout):
+        self.last_params = params
+        source = params["q"]
+        token_match = re.search(r"MGTERMZXQ\d{3}QXZ", source)
+        token = token_match.group(0) if token_match else "vitamin C"
+        translated = (
+            f"{token} supplements are effective in preventing the common cold."
+        )
+        return FakeResponse([[[translated, source, None, None]]])
+
+
+def test_english_claim_passes_through_without_translation():
+    translator = ClaimTranslator(session=FakeSession())
+    result = translator.translate_to_english(
+        "Vitamin C may help prevent the common cold."
+    )
+    assert result["source_language"] == "en"
+    assert result["translation_applied"] is False
+    assert result["translated_text"] == (
+        "Vitamin C may help prevent the common cold."
+    )
+
+
+def test_korean_claim_is_translated_and_glossary_is_restored():
+    session = FakeSession()
+    translator = ClaimTranslator(session=session)
+
+    result = translator.translate_to_english(
+        "비타민 C 보충제는 감기를 예방하는 데 효과가 있다."
+    )
+
+    assert result["source_language"] == "ko"
+    assert result["translation_applied"] is True
+    assert result["translation_validated"] is True
+    assert not ClaimTranslator.contains_hangul(result["translated_text"])
+    assert "vitamin c" in result["translated_text"].lower()
+    assert "common cold" in result["translated_text"].lower()
+    assert "MGTERMZXQ" not in result["translated_text"]
+    assert session.last_params["sl"] == "ko"
+    assert session.last_params["tl"] == "en"
+
+
+def test_translation_fails_closed_if_korean_remains():
+    class KoreanReturningSession(FakeSession):
+        def get(self, url, params, timeout):
+            return FakeResponse([[[params["q"], params["q"], None, None]]])
+
+    translator = ClaimTranslator(session=KoreanReturningSession())
+    try:
+        translator.translate_to_english("감기는 바이러스 감염이다.")
+    except Exception as error:
+        assert "Korean characters remain" in str(error)
+    else:
+        raise AssertionError("Expected translation validation to stop the pipeline.")

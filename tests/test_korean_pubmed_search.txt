@@ -1,0 +1,74 @@
+from backend.algorithms.local_search import LocalSearchOptimizer
+from backend.algorithms.search_result_evaluator import SearchResultEvaluator
+
+
+CLAIM = "비타민 C 보충제는 감기를 예방하는 데 효과가 있다."
+
+
+class FakeRetriever:
+    def __init__(self, articles):
+        self.articles = articles
+
+    def retrieve(self, query, max_results=None):
+        return self.articles[:max_results] if max_results else self.articles
+
+
+def make_optimizer(articles=None):
+    return LocalSearchOptimizer(
+        retriever=FakeRetriever(articles or []),
+        evaluator=SearchResultEvaluator(),
+    )
+
+
+def test_korean_claim_maps_to_pubmed_concepts():
+    optimizer = make_optimizer()
+    concepts = {item["concept"] for item in optimizer.extract_medical_concepts(CLAIM)}
+    assert {"nutrition_supplement", "common_cold", "effectiveness"}.issubset(concepts)
+
+
+def test_generated_pubmed_queries_use_english_medical_terms():
+    optimizer = make_optimizer()
+    levels = optimizer.generate_query_levels(CLAIM)
+    assert levels
+    joined = " ".join(item["query"] for item in levels)
+    assert "vitamin c" in joined.lower()
+    assert "common cold" in joined.lower()
+    assert "감기를" not in joined
+    assert "예방하는" not in joined
+    assert "효과가" not in joined
+
+
+def test_anchor_filter_rejects_article_missing_claim_disease():
+    optimizer = make_optimizer()
+    unrelated = {
+        "pmid": "2",
+        "title": "Vitamin C intake and dietary patterns among older adults",
+        "abstract": (
+            "This article examines vitamin C intake in relation to dietary "
+            "patterns, without respiratory illness or cold outcomes."
+        ),
+    }
+    assert not optimizer._matches_claim_anchors(CLAIM, unrelated)
+
+
+def test_retrieval_does_not_fill_quota_with_unrelated_articles():
+    relevant = {
+        "pmid": "1",
+        "title": "Vitamin C for preventing the common cold",
+        "abstract": (
+            "Vitamin C supplementation and incidence of common cold were "
+            "evaluated in randomized trials. The results report prevention outcomes."
+        ),
+    }
+    unrelated = {
+        "pmid": "2",
+        "title": "Vitamin C intake and dietary patterns among older adults",
+        "abstract": (
+            "This article examines vitamin C intake in relation to dietary "
+            "patterns, without respiratory illness or cold outcomes."
+        ),
+    }
+    optimizer = make_optimizer([relevant, unrelated])
+    result = optimizer.retrieve_candidates(CLAIM)
+    assert [article["pmid"] for article in result["articles"]] == ["1"]
+    assert result["rejected_for_relevance_count"] > 0

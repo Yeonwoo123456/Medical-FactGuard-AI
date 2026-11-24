@@ -1,4 +1,3 @@
-
 {
   "manifest_version": 3,
   "name": "Medical FactGuard AI",
@@ -7,12 +6,26 @@
 
   "permissions": [
     "activeTab",
+    "tabs",
     "scripting",
-    "storage"
+    "storage",
+    "contextMenus",
+    "sidePanel"
   ],
 
+  "host_permissions": [
+    "http://127.0.0.1:8000/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
   "action": {
-    "default_popup": "popup.html",
-    "default_title": "Medical FactGuard AI"
+    "default_title": "Open Medical FactGuard AI"
+  },
+
+  "side_panel": {
+    "default_path": "sidepanel.html"
   }
 }
