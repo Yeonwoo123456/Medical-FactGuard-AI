@@ -215,3 +215,100 @@ if __name__ == "__main__":
         result = filter_system.analyze_evidence(claim, text)
         print(text)
         print(result["relevance_status"], result["classification"], result["reason"])
+
+
+class SearchResultEvaluator:
+    """
+    Evaluates PubMed search results using semantic similarity.
+
+    Similarity represents textual relevance only.
+    It does not establish medical truth.
+    """
+
+    DEFAULT_MODEL = "all-MiniLM-L6-v2"
+
+    def __init__(self, model_name=None):
+        self.model_name = model_name or self.DEFAULT_MODEL
+        self.model = SentenceTransformer(self.model_name)
+        self.embedding_cache = {}
+
+    def _get_embedding(self, text):
+        text = str(text or "").strip()
+
+        if not text:
+            return None
+
+        if text not in self.embedding_cache:
+            embedding = self.model.encode(
+                text,
+                convert_to_numpy=True,
+                normalize_embeddings=True,
+            )
+            self.embedding_cache[text] = embedding
+
+        return self.embedding_cache[text]
+
+    def calculate_cosine_similarity(self, text1, text2):
+        if not text1 or not text2:
+            return 0.0
+
+        try:
+            import numpy as np
+
+            embedding1 = self._get_embedding(text1)
+            embedding2 = self._get_embedding(text2)
+
+            if embedding1 is None or embedding2 is None:
+                return 0.0
+
+            score = float(np.dot(embedding1, embedding2))
+            return max(0.0, min(1.0, score))
+
+        except Exception:
+            return 0.0
+
+    def evaluate_articles(self, claim, articles):
+        if not isinstance(claim, str) or not claim.strip():
+            return []
+
+        if not isinstance(articles, list) or not articles:
+            return []
+
+        evaluated = []
+
+        for article in articles:
+            if not isinstance(article, dict):
+                continue
+
+            title = str(article.get("title", "") or "")
+            abstract = str(article.get("abstract", "") or "")
+            text = f"{title} {abstract}".strip()
+
+            if not text:
+                continue
+
+            score = self.calculate_cosine_similarity(claim, text)
+            result = dict(article)
+            result["relevance"] = {
+                "score": round(score, 4),
+                "method": "semantic_similarity",
+                "interpretation": "Textual relevance only; not proof of medical efficacy or safety",
+            }
+            evaluated.append((score, result))
+
+        evaluated.sort(key=lambda item: item[0], reverse=True)
+        return [article for _, article in evaluated]
+
+    def calculate_query_score(self, claim, articles):
+        ranked = self.evaluate_articles(claim, articles)
+
+        if not ranked:
+            return 0.0
+
+        scores = [
+            float(article.get("relevance", {}).get("score", 0.0))
+            for article in ranked[:3]
+        ]
+
+        return sum(scores) / len(scores)
+

@@ -7,8 +7,7 @@ from backend.algorithms.sentence_classifier import SentenceClassifier
 from backend.algorithms.statistical_evidence import StatisticalEvidenceAnalyzer
 from backend.retrieval.abstract_parser import AbstractParser
 from backend.retrieval.pubmed_retriever import PubMedRetriever
-from backend.translation.claim_translator import ClaimTranslator
-
+from backend.translator.claim_translator import ClaimTranslator
 
 class EvidencePipeline:
     """Coordinates retrieval, sentence classification, and evidence analysis."""

@@ -13,8 +13,10 @@ Environment variables (optional):
     GOOGLE_TRANSLATE_API_KEY
 """
 
+import html
 import os
 import re
+import time
 from typing import Dict, List, Tuple
 
 import requests
@@ -244,26 +246,64 @@ class ClaimTranslator:
         return requests.utils.unquote(translations[0]["translatedText"]).strip()
 
     def _translate_google_web(self, text: str) -> str:
+        # The unofficial public endpoint can temporarily rate-limit requests.
+        # Retry briefly, then let the provider chain try another service.
+        last_error = None
+        for attempt in range(3):
+            try:
+                response = self.session.get(
+                    self.GOOGLE_WEB_ENDPOINT,
+                    params={
+                        "client": "gtx",
+                        "sl": "ko",
+                        "tl": "en",
+                        "dt": "t",
+                        "q": text,
+                    },
+                    timeout=self.timeout,
+                )
+                if response.status_code == 429 and attempt < 2:
+                    retry_after = response.headers.get("Retry-After", "")
+                    try:
+                        delay = min(max(float(retry_after), 1.0), 8.0)
+                    except (TypeError, ValueError):
+                        delay = 2.0 * (attempt + 1)
+                    time.sleep(delay)
+                    continue
+                response.raise_for_status()
+                payload = response.json()
+                translated = "".join(
+                    segment[0]
+                    for segment in (payload[0] or [])
+                    if isinstance(segment, list) and segment and segment[0]
+                ).strip()
+                if not translated:
+                    raise ValueError("Google translation returned empty text.")
+                return translated
+            except Exception as error:
+                last_error = error
+                if getattr(getattr(error, "response", None), "status_code", None) != 429:
+                    raise
+        raise last_error or RuntimeError("Google translation failed after retries.")
+
+    def _translate_mymemory(self, text: str) -> str:
+        """Use MyMemory as a secondary public translation provider."""
         response = self.session.get(
-            self.GOOGLE_WEB_ENDPOINT,
-            params={
-                "client": "gtx",
-                "sl": "ko",
-                "tl": "en",
-                "dt": "t",
-                "q": text,
-            },
+            "https://api.mymemory.translated.net/get",
+            params={"q": text, "langpair": "ko|en"},
             timeout=self.timeout,
         )
         response.raise_for_status()
-        payload = response.json()
-        translated = "".join(
-            segment[0]
-            for segment in (payload[0] or [])
-            if isinstance(segment, list) and segment and segment[0]
-        ).strip()
+        data = response.json()
+        if data.get("responseStatus") != 200:
+            raise ValueError(
+                f"MyMemory returned status {data.get('responseStatus')}: "
+                f"{data.get('responseDetails', 'unknown error')}"
+            )
+        translated = data.get("responseData", {}).get("translatedText", "")
+        translated = html.unescape(translated).strip()
         if not translated:
-            raise ValueError("Google translation returned empty text.")
+            raise ValueError("MyMemory returned no translated text.")
         return translated
 
     def _translate(self, text: str) -> Tuple[str, str]:
@@ -279,6 +319,8 @@ class ClaimTranslator:
                               lambda: self._translate_google_cloud(text, google_key)))
         providers.append(("Google Translate web endpoint",
                           lambda: self._translate_google_web(text)))
+        providers.append(("MyMemory translation API",
+                          lambda: self._translate_mymemory(text)))
 
         for provider_name, operation in providers:
             try:
